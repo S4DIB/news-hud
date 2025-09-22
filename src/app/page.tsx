@@ -21,11 +21,37 @@ interface Article {
 export default function Home() {
   const [articles, setArticles] = useState<Article[]>([])
   const [loading, setLoading] = useState(true)
-  const [lastUpdate, setLastUpdate] = useState(new Date())
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [isAutoScroll, setIsAutoScroll] = useState(true)
   const [scrollSpeed, setScrollSpeed] = useState(60)
+  const [mounted, setMounted] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Handle client-side mounting
+  useEffect(() => {
+    setMounted(true)
+    setLastUpdate(new Date())
+  }, [])
 
   useEffect(() => {
+    if (!mounted) return
+
+    // Auto-aggregate content on first load if no articles
+    const autoAggregateIfNeeded = async () => {
+      try {
+        console.log('🔄 Auto-aggregating fresh content...')
+        const response = await fetch('/api/aggregation/auto', {
+          method: 'POST'
+        })
+        const data = await response.json()
+        if (data.success) {
+          console.log(`✅ Auto-aggregated ${data.summary.total_articles} articles from ${data.summary.successful_sources} sources`)
+        }
+      } catch (error) {
+        console.log('⚠️ Auto-aggregation skipped:', error)
+      }
+    }
+
     // Set up real-time listener for articles
     const articlesQuery = query(
       collection(db, 'articles'),
@@ -33,13 +59,20 @@ export default function Home() {
       limit(50)
     )
 
-    const unsubscribe = onSnapshot(articlesQuery, (snapshot) => {
+    const unsubscribe = onSnapshot(articlesQuery, async (snapshot) => {
       const newArticles = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Article[]
       
       console.log(`Loaded ${newArticles.length} articles from Firebase`)
+      
+      // If no articles on first load, auto-aggregate fresh content
+      if (newArticles.length === 0 && loading) {
+        console.log('🔄 No articles found, fetching fresh content...')
+        await autoAggregateIfNeeded()
+      }
+      
       setArticles(newArticles)
       setLoading(false)
       setLastUpdate(new Date())
@@ -47,7 +80,7 @@ export default function Home() {
 
     // Cleanup subscription on unmount
     return () => unsubscribe()
-  }, [])
+  }, [mounted, loading])
 
   const getSourceIcon = (sourceName: string) => {
     if (sourceName.includes('Reddit')) return '🔴'
@@ -90,6 +123,28 @@ export default function Home() {
     return Math.round((article.finalScore || article.popularityScore || 0.5) * 100)
   }
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      console.log('🔄 Refreshing all content...')
+      const response = await fetch('/api/refresh', {
+        method: 'POST'
+      })
+      const data = await response.json()
+      
+      if (data.success) {
+        console.log(`✅ Refreshed: ${data.new_articles_added} new articles`)
+        setLastUpdate(new Date())
+      } else {
+        console.error('❌ Refresh failed:', data.error)
+      }
+    } catch (error) {
+      console.error('❌ Refresh error:', error)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <main>
       {/* Header */}
@@ -109,10 +164,19 @@ export default function Home() {
           <div className="status-dot accent"></div>
           <span>ARTICLES: {articles.length}</span>
           <div className="status-dot blue"></div>
-          <span>LAST UPDATE: {lastUpdate.toLocaleTimeString()}</span>
+                 <span>LAST UPDATE: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Loading...'}</span>
         </div>
 
         <div className="header-actions">
+          <button 
+            className="hud-button" 
+            title="Refresh Content" 
+            onClick={handleRefresh}
+            disabled={refreshing}
+            style={{ opacity: refreshing ? 0.6 : 1 }}
+          >
+            {refreshing ? '🔄' : '🔃'}
+          </button>
           <button className="hud-button" title="Bookmarks">🔖</button>
           <button className="hud-button" title="Settings">⚙️</button>
         </div>
