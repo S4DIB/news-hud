@@ -1,4 +1,95 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore'
+import { db } from '@/lib/firebase/config'
+
+interface Article {
+  id: string
+  title: string
+  summary: string
+  url: string
+  author: string
+  sourceName: string
+  publishedAt: any
+  popularityScore: number
+  finalScore: number
+  tags: string[]
+  metadata: any
+}
+
 export default function Home() {
+  const [articles, setArticles] = useState<Article[]>([])
+  const [loading, setLoading] = useState(true)
+  const [lastUpdate, setLastUpdate] = useState(new Date())
+  const [isAutoScroll, setIsAutoScroll] = useState(true)
+  const [scrollSpeed, setScrollSpeed] = useState(60)
+
+  useEffect(() => {
+    // Set up real-time listener for articles
+    const articlesQuery = query(
+      collection(db, 'articles'),
+      orderBy('publishedAt', 'desc'),
+      limit(50)
+    )
+
+    const unsubscribe = onSnapshot(articlesQuery, (snapshot) => {
+      const newArticles = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Article[]
+      
+      console.log(`Loaded ${newArticles.length} articles from Firebase`)
+      setArticles(newArticles)
+      setLoading(false)
+      setLastUpdate(new Date())
+    })
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe()
+  }, [])
+
+  const getSourceIcon = (sourceName: string) => {
+    if (sourceName.includes('Reddit')) return '🔴'
+    if (sourceName.includes('HackerNews')) return '🌐'
+    if (sourceName.includes('TLDR')) return '🤖'
+    if (sourceName.includes('Twitter')) return '🐦'
+    return '📡'
+  }
+
+  const formatTimeAgo = (timestamp: any) => {
+    if (!timestamp) return 'Unknown time'
+    
+    let date: Date
+    if (timestamp.seconds) {
+      // Firebase Timestamp
+      date = new Date(timestamp.seconds * 1000)
+    } else {
+      // Regular Date
+      date = new Date(timestamp)
+    }
+    
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffMinutes = Math.floor(diffMs / (1000 * 60))
+    
+    if (diffHours > 24) {
+      const diffDays = Math.floor(diffHours / 24)
+      return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+    } else if (diffHours > 0) {
+      return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    } else if (diffMinutes > 0) {
+      return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`
+    } else {
+      return 'Just now'
+    }
+  }
+
+  const calculateScore = (article: Article) => {
+    return Math.round((article.finalScore || article.popularityScore || 0.5) * 100)
+  }
+
   return (
     <main>
       {/* Header */}
@@ -16,9 +107,9 @@ export default function Home() {
           <div className="status-dot"></div>
           <span>AI RANKING</span>
           <div className="status-dot accent"></div>
-          <span>SOURCES: 5</span>
+          <span>ARTICLES: {articles.length}</span>
           <div className="status-dot blue"></div>
-          <span>LAST UPDATE: {new Date().toLocaleTimeString()}</span>
+          <span>LAST UPDATE: {lastUpdate.toLocaleTimeString()}</span>
         </div>
 
         <div className="header-actions">
@@ -33,141 +124,142 @@ export default function Home() {
         <div className="fade-top"></div>
         <div className="fade-bottom"></div>
         
-        <div className="news-feed">
-          {/* Sample Articles */}
-          <article className="article-card">
-            <div className="article-score">92%</div>
-            <div className="article-meta">
-              <span>🌐</span>
-              <span className="article-source">HACKERNEWS</span>
-              <span>•</span>
-              <span>about 2 hours ago</span>
-              <span>•</span>
-              <span>👤 Dr. Sarah Chen</span>
-            </div>
-            <h2 className="article-title">
-              AI Breakthrough: New Neural Network Architecture Achieves Human-Level Performance
-            </h2>
-            <p className="article-summary">
-              Researchers at leading tech companies have developed a revolutionary neural network that demonstrates human-level performance across multiple cognitive tasks.
-            </p>
-            <div className="article-footer">
-              <div className="article-stats">
-                <span>📈 847</span>
-                <span>💬 234</span>
+        <div 
+          className="news-feed"
+          style={{
+            animationDuration: `${scrollSpeed}s`,
+            animationPlayState: isAutoScroll ? 'running' : 'paused'
+          }}
+        >
+          {loading ? (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '40px', 
+              color: '#00d4ff',
+              fontSize: '18px'
+            }}>
+              <div style={{ marginBottom: '16px' }}>🔄 Loading live articles...</div>
+              <div style={{ fontSize: '14px', opacity: 0.7 }}>
+                If no articles appear, visit /test-reddit and click "Aggregate Reddit Content"
               </div>
-              <a href="#" style={{ color: 'rgba(0, 255, 65, 0.7)', fontSize: '12px' }}>Read more →</a>
             </div>
-            <div className="article-tags">
-              <span className="tag">AI</span>
-              <span className="tag">Machine Learning</span>
-              <span className="tag">Research</span>
-            </div>
-          </article>
-
-          <article className="article-card">
-            <div className="article-score">78%</div>
-            <div className="article-meta">
-              <span>🔴</span>
-              <span className="article-source">REDDIT</span>
-              <span>•</span>
-              <span>about 4 hours ago</span>
-              <span>•</span>
-              <span>👤 Mike Rodriguez</span>
-            </div>
-            <h2 className="article-title">
-              Quantum Computing Startup Raises $100M Series B for Commercial Applications
-            </h2>
-            <p className="article-summary">
-              A quantum computing company has secured significant funding to bring quantum solutions to enterprise customers in finance and logistics.
-            </p>
-            <div className="article-footer">
-              <div className="article-stats">
-                <span>📈 567</span>
-                <span>💬 89</span>
-                <span>⬆️ 1240</span>
+          ) : articles.length === 0 ? (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '40px', 
+              color: '#00d4ff',
+              fontSize: '18px'
+            }}>
+              <div style={{ marginBottom: '16px' }}>📰 No articles found</div>
+              <div style={{ fontSize: '14px', opacity: 0.7, marginBottom: '20px' }}>
+                Get started by adding some content!
               </div>
-              <a href="#" style={{ color: 'rgba(0, 255, 65, 0.7)', fontSize: '12px' }}>Read more →</a>
+              <a 
+                href="/test-reddit" 
+                style={{
+                  display: 'inline-block',
+                  padding: '12px 24px',
+                  background: 'rgba(0, 255, 100, 0.3)',
+                  border: '1px solid #00ff64',
+                  borderRadius: '4px',
+                  color: '#00ff64',
+                  textDecoration: 'none',
+                  fontSize: '14px'
+                }}
+              >
+                🔴 Add Reddit Content
+              </a>
             </div>
-            <div className="article-tags">
-              <span className="tag">Quantum Computing</span>
-              <span className="tag">Startup</span>
-              <span className="tag">Funding</span>
-            </div>
-          </article>
-
-          <article className="article-card">
-            <div className="article-score">76%</div>
-            <div className="article-meta">
-              <span>🌐</span>
-              <span className="article-source">HACKERNEWS</span>
-              <span>•</span>
-              <span>about 6 hours ago</span>
-              <span>•</span>
-              <span>👤 Alex Kumar</span>
-            </div>
-            <h2 className="article-title">
-              New Programming Language Promises 10x Performance Improvements
-            </h2>
-            <p className="article-summary">
-              A systems programming language designed for high-performance computing shows remarkable benchmarks in early testing.
-            </p>
-            <div className="article-footer">
-              <div className="article-stats">
-                <span>📈 423</span>
-                <span>💬 156</span>
-              </div>
-              <a href="#" style={{ color: 'rgba(0, 255, 65, 0.7)', fontSize: '12px' }}>Read more →</a>
-            </div>
-            <div className="article-tags">
-              <span className="tag">Programming</span>
-              <span className="tag">Performance</span>
-              <span className="tag">Systems</span>
-            </div>
-          </article>
-
-          <article className="article-card">
-            <div className="article-score">64%</div>
-            <div className="article-meta">
-              <span>🤖</span>
-              <span className="article-source">TLDR AI</span>
-              <span>•</span>
-              <span>about 8 hours ago</span>
-              <span>•</span>
-              <span>👤 Dr. Maria Santos</span>
-            </div>
-            <h2 className="article-title">
-              Climate Tech Innovation: Solar Efficiency Reaches Record 47%
-            </h2>
-            <p className="article-summary">
-              Scientists have achieved a new world record in solar cell efficiency, bringing us closer to cost-effective renewable energy.
-            </p>
-            <div className="article-footer">
-              <div className="article-stats">
-                <span>📈 345</span>
-                <span>💬 78</span>
-              </div>
-              <a href="#" style={{ color: 'rgba(0, 255, 65, 0.7)', fontSize: '12px' }}>Read more →</a>
-            </div>
-            <div className="article-tags">
-              <span className="tag">Climate Tech</span>
-              <span className="tag">Solar</span>
-              <span className="tag">Renewable Energy</span>
-            </div>
-          </article>
+          ) : (
+            // Repeat articles for continuous scroll effect
+            [...articles, ...articles, ...articles].map((article, index) => (
+              <article key={`${article.id}-${index}`} className="article-card">
+                <div className="article-score">{calculateScore(article)}%</div>
+                <div className="article-meta">
+                  <span>{getSourceIcon(article.sourceName)}</span>
+                  <span className="article-source">{article.sourceName}</span>
+                  <span>•</span>
+                  <span>{formatTimeAgo(article.publishedAt)}</span>
+                  {article.author && (
+                    <>
+                      <span>•</span>
+                      <span>👤 {article.author}</span>
+                    </>
+                  )}
+                </div>
+                <h2 className="article-title">
+                  {article.title}
+                </h2>
+                <p className="article-summary">
+                  {article.summary || 'No summary available'}
+                </p>
+                <div className="article-footer">
+                  <div className="article-stats">
+                    {article.metadata?.score && <span>📈 {article.metadata.score}</span>}
+                    {article.metadata?.comments && <span>💬 {article.metadata.comments}</span>}
+                    {article.metadata?.upvote_ratio && (
+                      <span>👍 {Math.round(article.metadata.upvote_ratio * 100)}%</span>
+                    )}
+                  </div>
+                  <a 
+                    href={article.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    style={{ color: 'rgba(0, 212, 255, 0.7)', fontSize: '12px' }}
+                  >
+                    Read more →
+                  </a>
+                </div>
+                {article.tags && article.tags.length > 0 && (
+                  <div className="article-tags">
+                    {article.tags.slice(0, 3).map((tag, tagIndex) => (
+                      <span key={tagIndex} className="tag">{tag}</span>
+                    ))}
+                    {article.tags.length > 3 && (
+                      <span className="tag">+{article.tags.length - 3} more</span>
+                    )}
+                  </div>
+                )}
+              </article>
+            ))
+          )}
         </div>
       </div>
 
       {/* Controls */}
       <div className="controls">
-        <button className="control-button" title="Slower">⏪</button>
-        <button className="control-button active" title="Pause">⏸️</button>
-        <button className="control-button" title="Faster">⏩</button>
+        <button 
+          className="control-button" 
+          title="Slower"
+          onClick={() => setScrollSpeed(Math.min(scrollSpeed + 15, 120))}
+        >
+          ⏪
+        </button>
+        <button 
+          className={`control-button ${isAutoScroll ? 'active' : ''}`}
+          title={isAutoScroll ? "Pause" : "Play"}
+          onClick={() => setIsAutoScroll(!isAutoScroll)}
+        >
+          {isAutoScroll ? '⏸️' : '▶️'}
+        </button>
+        <button 
+          className="control-button" 
+          title="Faster"
+          onClick={() => setScrollSpeed(Math.max(scrollSpeed - 15, 30))}
+        >
+          ⏩
+        </button>
         <div className="speed-indicator">
-          <div className="speed-value">60s</div>
+          <div className="speed-value">{scrollSpeed}s</div>
           <div style={{ fontSize: '10px', opacity: 0.7 }}>CYCLE</div>
         </div>
-        <button className="control-button" title="Reset">🔄</button>
+        <button 
+          className="control-button" 
+          title="Reset"
+          onClick={() => setScrollSpeed(60)}
+        >
+          🔄
+        </button>
       </div>
     </main>
   )
