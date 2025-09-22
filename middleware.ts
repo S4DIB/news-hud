@@ -1,7 +1,9 @@
-import { updateSession } from '@/lib/supabase/middleware'
+// Firebase doesn't require middleware for basic functionality
+// You can add authentication middleware here if needed later
 
-export async function middleware(request: any) {
-  return await updateSession(request)
+export function middleware(request: any) {
+  // For now, just pass through all requests
+  return
 }
 
 export const config = {

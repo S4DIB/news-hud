@@ -1,62 +1,62 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { db } from '@/lib/firebase/config'
+import { collection, getDocs, addDoc, Timestamp } from 'firebase/firestore'
 
 export async function GET() {
   try {
-    const supabase = createClient()
+    // Test Firebase connection
+    const testCollection = collection(db, 'health-check')
     
-    // Test database connection
-    const { data: feedData, error: feedError } = await supabase
-      .from('feed_sources')
-      .select('count')
-      .limit(1)
-
-    // Test articles table
-    const { data: articlesData, error: articlesError } = await supabase
-      .from('articles')
-      .select('count')
-      .limit(1)
-
-    const errors = []
-    if (feedError) errors.push(`Feed sources: ${feedError.message}`)
-    if (articlesError) errors.push(`Articles: ${articlesError.message}`)
-
-    if (errors.length > 0) {
-      console.error('Database health check failed:', errors)
-      return NextResponse.json(
-        { 
-          status: 'unhealthy', 
-          errors,
-          timestamp: new Date().toISOString(),
-          supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL ? 'configured' : 'missing',
-          supabase_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? 'configured' : 'missing'
-        },
-        { status: 503 }
-      )
+    // Try to write a test document
+    await addDoc(testCollection, {
+      message: 'Health check test',
+      timestamp: Timestamp.now()
+    })
+    
+    // Try to read from articles collection
+    let articlesCount = 0
+    try {
+      const articlesCollection = collection(db, 'articles')
+      const articlesSnapshot = await getDocs(articlesCollection)
+      articlesCount = articlesSnapshot.size
+    } catch (articlesError) {
+      console.log('Articles collection might not exist yet:', articlesError)
     }
 
     return NextResponse.json({
       status: 'healthy',
       timestamp: new Date().toISOString(),
       version: process.env.npm_package_version || '1.0.0',
+      database: 'firebase',
       services: {
-        database: 'connected',
-        api: 'operational',
-        supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL ? 'configured' : 'missing',
-        supabase_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? 'configured' : 'missing'
+        firebase: 'connected',
+        firestore: 'operational',
+        api: 'operational'
       },
-      tables_tested: ['feed_sources', 'articles']
+      environment: {
+        firebase_api_key: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ? 'configured' : 'missing',
+        firebase_project_id: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ? 'configured' : 'missing',
+        firebase_auth_domain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ? 'configured' : 'missing'
+      },
+      collections: {
+        articles: articlesCount,
+        health_check: 'accessible'
+      }
     })
 
   } catch (error: any) {
-    console.error('Health check error:', error)
+    console.error('Firebase health check error:', error)
     return NextResponse.json(
       { 
         status: 'unhealthy', 
-        error: error.message || 'Internal server error',
+        error: error.message || 'Firebase connection failed',
         timestamp: new Date().toISOString(),
-        supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL ? 'configured' : 'missing',
-        supabase_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? 'configured' : 'missing'
+        database: 'firebase',
+        environment: {
+          firebase_api_key: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ? 'configured' : 'missing',
+          firebase_project_id: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ? 'configured' : 'missing',
+          firebase_auth_domain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ? 'configured' : 'missing'
+        }
       },
       { status: 500 }
     )
