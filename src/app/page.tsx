@@ -1,25 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore'
-import { db } from '@/lib/firebase/config'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
+import { trackUserInteraction } from '@/lib/firebase/database'
+import { fetchDynamicNews, calculateRelevanceForDynamic, type DynamicArticle } from '@/lib/dynamicNews'
 
-interface Article {
-  id: string
-  title: string
-  summary: string
-  url: string
-  author: string
-  sourceName: string
-  publishedAt: any
-  popularityScore: number
-  finalScore: number
-  tags: string[]
-  metadata: any
-}
+// Using DynamicArticle from dynamicNews.ts
 
 export default function Home() {
-  const [articles, setArticles] = useState<Article[]>([])
+  const { user, userProfile, loading: authLoading, signOut } = useAuth()
+  const router = useRouter()
+  const [articles, setArticles] = useState<DynamicArticle[]>([])
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [isAutoScroll, setIsAutoScroll] = useState(true)
@@ -27,60 +19,94 @@ export default function Home() {
   const [mounted, setMounted] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
-  // Handle client-side mounting
+  // Redirect to auth if not logged in
   useEffect(() => {
-    setMounted(true)
-    setLastUpdate(new Date())
-  }, [])
-
-  useEffect(() => {
-    if (!mounted) return
-
-    // Auto-aggregate content on first load if no articles
-    const autoAggregateIfNeeded = async () => {
-      try {
-        console.log('🔄 Auto-aggregating fresh content...')
-        const response = await fetch('/api/aggregation/auto', {
-          method: 'POST'
-        })
-        const data = await response.json()
-        if (data.success) {
-          console.log(`✅ Auto-aggregated ${data.summary.total_articles} articles from ${data.summary.successful_sources} sources`)
-        }
-      } catch (error) {
-        console.log('⚠️ Auto-aggregation skipped:', error)
-      }
+    if (!authLoading && !user) {
+      router.push('/auth')
     }
+  }, [user, authLoading, router])
 
-    // Set up real-time listener for articles
-    const articlesQuery = query(
-      collection(db, 'articles'),
-      orderBy('publishedAt', 'desc'),
-      limit(50)
-    )
+  // Use user preferences for scroll settings
+  useEffect(() => {
+    if (userProfile?.preferences) {
+      setIsAutoScroll(userProfile.preferences.autoScroll)
+      setScrollSpeed(userProfile.preferences.scrollSpeed)
+    }
+  }, [userProfile])
 
-    const unsubscribe = onSnapshot(articlesQuery, async (snapshot) => {
-      const newArticles = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Article[]
+  // Fetch dynamic news based on user interests
+  const fetchNews = async () => {
+    setLoading(true)
+    try {
+      const interests = userProfile?.interests || []
+      console.log('🎯 STARTING FRESH NEWS FETCH')
+      console.log('🎯 Current user interests:', interests)
+      console.log('🎯 User profile:', userProfile)
       
-      console.log(`Loaded ${newArticles.length} articles from Firebase`)
-      
-      // If no articles on first load, auto-aggregate fresh content
-      if (newArticles.length === 0 && loading) {
-        console.log('🔄 No articles found, fetching fresh content...')
-        await autoAggregateIfNeeded()
+      if (interests.length === 0) {
+        console.log('⚠️ No interests set, using default content')
       }
       
-      setArticles(newArticles)
+      let fetchedArticles = await fetchDynamicNews(interests)
+      console.log('📰 Raw fetched articles:', fetchedArticles.length)
+      console.log('📰 First few articles:', fetchedArticles.slice(0, 3).map(a => ({ title: a.title, source: a.sourceName })))
+      
+      // Calculate relevance for each article
+      fetchedArticles = fetchedArticles.map(article => 
+        calculateRelevanceForDynamic(article, interests)
+      )
+      
+      // Sort by relevance and popularity
+      fetchedArticles.sort((a, b) => {
+        const scoreA = (a.relevanceScore || 0) * 0.6 + a.popularityScore * 0.4
+        const scoreB = (b.relevanceScore || 0) * 0.6 + b.popularityScore * 0.4
+        return scoreB - scoreA
+      })
+      
+      console.log('🎯 Final articles after sorting:', fetchedArticles.slice(0, 3).map(a => ({ 
+        title: a.title, 
+        source: a.sourceName, 
+        relevance: a.relevanceScore,
+        popularity: a.popularityScore 
+      })))
+      
+      // Force clear current articles first
+      setArticles([])
+      
+      // Use setTimeout to ensure state clears before setting new articles
+      setTimeout(() => {
+        setArticles(fetchedArticles)
+        setLastUpdate(new Date())
+        console.log(`✅ COMPLETED: Loaded ${fetchedArticles.length} personalized articles`)
+      }, 100)
+      
+      console.log(`🔄 PROCESSING: About to load ${fetchedArticles.length} personalized articles`)
+    } catch (error) {
+      console.error('❌ Error fetching news:', error)
+    } finally {
       setLoading(false)
-      setLastUpdate(new Date())
-    })
+    }
+  }
 
-    // Cleanup subscription on unmount
-    return () => unsubscribe()
-  }, [mounted, loading])
+  // Fetch news when component mounts or user profile changes
+  useEffect(() => {
+    if (!authLoading && user && userProfile) {
+      console.log('🔄 User profile changed, fetching fresh news...')
+      fetchNews()
+    }
+  }, [user, userProfile?.interests, authLoading]) // Added userProfile?.interests dependency
+
+  // Auto-refresh news every 5 minutes
+  useEffect(() => {
+    if (!user) return
+    
+    const interval = setInterval(() => {
+      console.log('🔄 Auto-refreshing news...')
+      fetchNews()
+    }, 15 * 60 * 1000) // 15 minutes - HackerNews doesn't change that frequently
+    
+    return () => clearInterval(interval)
+  }, [user, userProfile?.interests]) // Added userProfile?.interests dependency
 
   const getSourceIcon = (sourceName: string) => {
     if (sourceName.includes('Reddit')) return '🔴'
@@ -90,58 +116,69 @@ export default function Home() {
     return '📡'
   }
 
-  const formatTimeAgo = (timestamp: any) => {
-    if (!timestamp) return 'Unknown time'
-    
-    let date: Date
-    if (timestamp.seconds) {
-      // Firebase Timestamp
-      date = new Date(timestamp.seconds * 1000)
-    } else {
-      // Regular Date
-      date = new Date(timestamp)
-    }
-    
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-    const diffMinutes = Math.floor(diffMs / (1000 * 60))
-    
-    if (diffHours > 24) {
-      const diffDays = Math.floor(diffHours / 24)
-      return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
-    } else if (diffHours > 0) {
-      return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-    } else if (diffMinutes > 0) {
-      return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`
-    } else {
-      return 'Just now'
-    }
-  }
+    const formatTimeAgo = (timestamp: Date) => {
+      if (!timestamp) return 'Unknown time'
 
-  const calculateScore = (article: Article) => {
-    return Math.round((article.finalScore || article.popularityScore || 0.5) * 100)
-  }
+      const now = new Date()
+      const diffMs = now.getTime() - timestamp.getTime()
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+      const diffMinutes = Math.floor(diffMs / (1000 * 60))
+
+      if (diffHours > 24) {
+        const diffDays = Math.floor(diffHours / 24)
+        return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+      } else if (diffHours > 0) {
+        return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+      } else if (diffMinutes > 0) {
+        return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`
+      } else {
+        return 'Just now'
+      }
+    }
+
+    const calculateScore = (article: DynamicArticle) => {
+      const relevanceBonus = (article.relevanceScore || 0) * 0.3
+      return Math.round(((article.finalScore || article.popularityScore || 0.5) + relevanceBonus) * 100)
+    }
 
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      console.log('🔄 Refreshing all content...')
-      const response = await fetch('/api/refresh', {
-        method: 'POST'
-      })
-      const data = await response.json()
+      console.log('🔄 MANUAL REFRESH - Clearing all articles first')
+      console.log('🔄 Current interests:', userProfile?.interests)
       
-      if (data.success) {
-        console.log(`✅ Refreshed: ${data.new_articles_added} new articles`)
-        setLastUpdate(new Date())
-      } else {
-        console.error('❌ Refresh failed:', data.error)
-      }
+      // Force clear articles and show loading
+      setArticles([])
+      setLoading(true)
+      
+      // Small delay to ensure UI updates
+      await new Promise(resolve => setTimeout(resolve, 200))
+      
+      // Force fresh fetch
+      await fetchNews()
+      
+      console.log('✅ Manual refresh completed!')
     } catch (error) {
       console.error('❌ Refresh error:', error)
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  const handleArticleClick = async (article: DynamicArticle, position: number) => {
+    if (user) {
+      try {
+        await trackUserInteraction({
+          userId: user.uid,
+          articleId: article.id,
+          type: 'click',
+          source: 'feed',
+          position,
+          deviceType: 'desktop'
+        })
+      } catch (error) {
+        console.error('Failed to track interaction:', error)
+      }
     }
   }
 
@@ -158,27 +195,66 @@ export default function Home() {
           </div>
         </div>
         
-        <div className="header-status" style={{ fontSize: '12px' }}>
-          <div className="status-dot"></div>
-          <span>AI RANKING</span>
-          <div className="status-dot accent"></div>
-          <span>ARTICLES: {articles.length}</span>
-          <div className="status-dot blue"></div>
-                 <span>LAST UPDATE: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Loading...'}</span>
-        </div>
+            <div className="header-status" style={{ fontSize: '12px' }}>
+              <div className="status-dot"></div>
+              <span>LIVE PERSONALIZED</span>
+              <div className="status-dot accent"></div>
+              <span>ARTICLES: {articles.length}</span>
+              <div className="status-dot blue"></div>
+              <span>INTERESTS: {userProfile?.interests?.length || 0}</span>
+              <div className="status-dot"></div>
+              <span>LAST UPDATE: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Loading...'}</span>
+            </div>
 
-        <div className="header-actions">
-          <button 
-            className="hud-button" 
-            title="Refresh Content" 
-            onClick={handleRefresh}
-            disabled={refreshing}
-            style={{ opacity: refreshing ? 0.6 : 1 }}
-          >
-            {refreshing ? '🔄' : '🔃'}
-          </button>
-          <button className="hud-button" title="Bookmarks">🔖</button>
-          <button className="hud-button" title="Settings">⚙️</button>
+            <div className="header-actions">
+              <button
+                className="hud-button"
+                title="Refresh Content"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                style={{ opacity: refreshing ? 0.6 : 1 }}
+              >
+                {refreshing ? '🔄' : '🔃'}
+              </button>
+              <button className="hud-button" title="Bookmarks">🔖</button>
+              <button 
+                className="hud-button" 
+                title="Settings"
+                onClick={() => router.push('/settings')}
+              >
+                ⚙️
+              </button>
+          {userProfile && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px',
+              marginLeft: '16px',
+              padding: '6px 12px',
+              background: 'rgba(0, 212, 255, 0.1)',
+              borderRadius: '4px',
+              border: '1px solid rgba(0, 212, 255, 0.3)'
+            }}>
+              {userProfile.photoURL && (
+                <img 
+                  src={userProfile.photoURL} 
+                  alt="Profile"
+                  style={{ width: '20px', height: '20px', borderRadius: '50%' }}
+                />
+              )}
+              <span style={{ fontSize: '12px', color: 'var(--hud-primary)' }}>
+                {userProfile.displayName || 'User'}
+              </span>
+              <button
+                className="hud-button"
+                title="Sign Out"
+                onClick={signOut}
+                style={{ fontSize: '10px', padding: '2px 6px' }}
+              >
+                🚪
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -235,9 +311,9 @@ export default function Home() {
               </a>
             </div>
           ) : (
-            // Repeat articles for continuous scroll effect
-            [...articles, ...articles, ...articles].map((article, index) => (
-              <article key={`${article.id}-${index}`} className="article-card">
+                // Repeat articles for continuous scroll effect
+                [...articles, ...articles, ...articles].map((article, index) => (
+              <article key={`${article.id}-${index}-${lastUpdate?.getTime()}`} className="article-card">
                 <div className="article-score">{calculateScore(article)}%</div>
                 <div className="article-meta">
                   <span>{getSourceIcon(article.sourceName)}</span>
@@ -265,14 +341,15 @@ export default function Home() {
                       <span>👍 {Math.round(article.metadata.upvote_ratio * 100)}%</span>
                     )}
                   </div>
-                  <a 
-                    href={article.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    style={{ color: 'rgba(0, 212, 255, 0.7)', fontSize: '12px' }}
-                  >
-                    Read more →
-                  </a>
+                         <a
+                           href={article.url}
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           onClick={() => handleArticleClick(article, index)}
+                           style={{ color: 'rgba(0, 212, 255, 0.7)', fontSize: '12px' }}
+                         >
+                           Read more →
+                         </a>
                 </div>
                 {article.tags && article.tags.length > 0 && (
                   <div className="article-tags">
