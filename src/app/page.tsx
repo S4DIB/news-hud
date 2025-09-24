@@ -70,15 +70,10 @@ export default function Home() {
         popularity: a.popularityScore 
       })))
       
-      // Force clear current articles first
-      setArticles([])
-      
-      // Use setTimeout to ensure state clears before setting new articles
-      setTimeout(() => {
-        setArticles(fetchedArticles)
-        setLastUpdate(new Date())
-        console.log(`✅ COMPLETED: Loaded ${fetchedArticles.length} personalized articles`)
-      }, 100)
+      // Set articles immediately without delay to prevent glitches
+      setArticles(fetchedArticles)
+      setLastUpdate(new Date())
+      console.log(`✅ COMPLETED: Loaded ${fetchedArticles.length} personalized articles`)
       
       console.log(`🔄 PROCESSING: About to load ${fetchedArticles.length} personalized articles`)
     } catch (error) {
@@ -144,17 +139,9 @@ export default function Home() {
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      console.log('🔄 MANUAL REFRESH - Clearing all articles first')
-      console.log('🔄 Current interests:', userProfile?.interests)
+      console.log('🔄 MANUAL REFRESH')
       
-      // Force clear articles and show loading
-      setArticles([])
-      setLoading(true)
-      
-      // Small delay to ensure UI updates
-      await new Promise(resolve => setTimeout(resolve, 200))
-      
-      // Force fresh fetch
+      // Fetch fresh content immediately
       await fetchNews()
       
       console.log('✅ Manual refresh completed!')
@@ -217,6 +204,13 @@ export default function Home() {
                 {refreshing ? '🔄' : '🔃'}
               </button>
               <button className="hud-button" title="Bookmarks">🔖</button>
+              <button 
+                className="hud-button" 
+                title="AI Features"
+                onClick={() => router.push('/ai-features')}
+              >
+                🤖
+              </button>
               <button 
                 className="hud-button" 
                 title="Settings"

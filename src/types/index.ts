@@ -116,3 +116,22 @@ export interface AIAnalysisResult {
   summary: string;
   confidence: number;
 }
+
+export interface DynamicArticle {
+  id: string
+  title: string
+  summary: string
+  url: string
+  author: string
+  sourceName: string
+  publishedAt: Date
+  popularityScore: number
+  tags: string[]
+  metadata: any
+  relevanceScore?: number
+  finalScore?: number
+  aiSummary?: string
+  aiTags?: string[]
+  aiRelevanceScore?: number
+  aiRelevanceReasoning?: string
+}

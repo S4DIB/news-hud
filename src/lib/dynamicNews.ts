@@ -37,6 +37,9 @@ const INTEREST_TO_SEARCH_TERMS: Record<string, string[]> = {
   'Investing': ['investing', 'stocks', 'trading', 'portfolio', 'dividends', 'market', 'nasdaq', 'sp500', 'etf', 'bonds'],
   'Stock Market': ['stock market', 'stocks', 'trading', 'investing', 'portfolio', 'market', 'nasdaq', 'sp500', 'etf', 'bonds', 'equity', 'shares', 'wallstreet', 'bull market', 'bear market'],
   'Marketing': ['marketing', 'advertising', 'branding', 'seo', 'social media', 'digital marketing', 'content marketing', 'growth'],
+  'Product Management': ['product management', 'product manager', 'pm', 'product', 'roadmap', 'features', 'user experience', 'ux'],
+  'Leadership': ['leadership', 'management', 'manager', 'ceo', 'executive', 'team', 'culture', 'workplace'],
+  'E-commerce': ['ecommerce', 'e-commerce', 'online shopping', 'retail', 'shopify', 'amazon', 'marketplace', 'sales'],
   'Cryptocurrency': ['cryptocurrency', 'crypto', 'bitcoin', 'ethereum', 'trading', 'defi', 'nft', 'altcoin', 'blockchain'],
 
   // Science
@@ -45,17 +48,34 @@ const INTEREST_TO_SEARCH_TERMS: Record<string, string[]> = {
   'Biology': ['biology', 'genetics', 'dna', 'evolution', 'genome', 'crispr', 'biotech', 'medical research'],
   'Climate Change': ['climate change', 'global warming', 'environment', 'renewable energy', 'carbon', 'sustainability', 'green tech'],
   'Medical Research': ['medical', 'healthcare', 'medicine', 'clinical', 'pharma', 'drug', 'treatment', 'vaccine', 'therapy'],
+  'Chemistry': ['chemistry', 'chemical', 'molecules', 'reaction', 'lab', 'synthesis', 'materials'],
+  'Neuroscience': ['neuroscience', 'brain', 'neural', 'neurons', 'cognitive', 'psychology', 'mind'],
+  'Psychology': ['psychology', 'mental health', 'behavior', 'cognitive', 'therapy', 'brain', 'mind'],
+  'Environment': ['environment', 'ecology', 'conservation', 'wildlife', 'nature', 'pollution', 'ecosystem'],
+  'Innovation': ['innovation', 'invention', 'breakthrough', 'discovery', 'research', 'technology', 'future'],
 
   // Lifestyle
   'Gaming': ['gaming', 'games', 'video games', 'esports', 'steam', 'nintendo', 'xbox', 'playstation', 'pc gaming', 'mobile gaming'],
   'Health & Fitness': ['health', 'fitness', 'exercise', 'nutrition', 'wellness', 'workout', 'diet', 'mental health'],
   'Travel': ['travel', 'tourism', 'vacation', 'adventure', 'destination', 'hotel', 'flight', 'backpacking'],
   'Food': ['food', 'cooking', 'recipe', 'restaurant', 'cuisine', 'chef', 'culinary', 'dining'],
+  'Photography': ['photography', 'photo', 'camera', 'lens', 'portrait', 'landscape', 'digital photography'],
+  'Movies & TV': ['movies', 'films', 'tv shows', 'television', 'netflix', 'streaming', 'cinema', 'entertainment'],
+  'Music': ['music', 'songs', 'album', 'artist', 'band', 'concert', 'spotify', 'audio'],
+  'Books': ['books', 'reading', 'novel', 'author', 'literature', 'publishing', 'kindle'],
+  'Fashion': ['fashion', 'style', 'clothing', 'design', 'trends', 'outfit', 'brand'],
+  'Sports': ['sports', 'football', 'basketball', 'soccer', 'baseball', 'olympics', 'athletics', 'fitness'],
 
   // News & Politics
   'World News': ['world news', 'international', 'global', 'breaking news', 'current events', 'reuters', 'ap news'],
   'Politics': ['politics', 'government', 'election', 'policy', 'democracy', 'congress', 'senate', 'president'],
-  'Economics': ['economics', 'economy', 'gdp', 'inflation', 'trade', 'market', 'recession', 'fed', 'interest rates']
+  'Economics': ['economics', 'economy', 'gdp', 'inflation', 'trade', 'market', 'recession', 'fed', 'interest rates'],
+  'Social Issues': ['social issues', 'inequality', 'justice', 'rights', 'social justice', 'community', 'society'],
+  'Policy': ['policy', 'regulation', 'law', 'government', 'public policy', 'legislation', 'rules'],
+  'Elections': ['elections', 'voting', 'campaign', 'candidate', 'ballot', 'democracy', 'politics'],
+  'International Relations': ['international', 'foreign policy', 'diplomacy', 'global', 'nato', 'un', 'trade war'],
+  'Education': ['education', 'school', 'university', 'learning', 'student', 'teacher', 'academic'],
+  'Law': ['law', 'legal', 'court', 'judge', 'lawyer', 'justice', 'lawsuit', 'legislation']
 }
 
 // Get search terms for user interests
@@ -281,6 +301,9 @@ function getRelevantSubreddits(interests: string[]): string[] {
     'Investing': ['investing', 'StockMarket', 'SecurityAnalysis', 'ValueInvesting', 'personalfinance'],
     'Stock Market': ['stocks', 'investing', 'wallstreetbets', 'SecurityAnalysis', 'StockMarket', 'personalfinance', 'ValueInvesting', 'financialindependence'],
     'Marketing': ['marketing', 'digital_marketing', 'socialmedia', 'advertising', 'growth_hacking'],
+    'Product Management': ['ProductManagement', 'product', 'userexperience', 'ux', 'startups'],
+    'Leadership': ['leadership', 'management', 'entrepreneur', 'business'],
+    'E-commerce': ['ecommerce', 'shopify', 'amazon', 'FulfillmentByAmazon', 'online_marketing'],
     'Cryptocurrency': ['cryptocurrency', 'CryptoCurrency', 'Bitcoin', 'ethereum', 'CryptoMarkets'],
 
     // Science
@@ -289,17 +312,34 @@ function getRelevantSubreddits(interests: string[]): string[] {
     'Biology': ['biology', 'genetics', 'microbiology', 'evolution'],
     'Climate Change': ['climatechange', 'environment', 'renewable_energy', 'sustainability'],
     'Medical Research': ['medicine', 'medical', 'health', 'COVID19'],
+    'Chemistry': ['chemistry', 'science', 'materials', 'ChemicalEngineering'],
+    'Neuroscience': ['neuroscience', 'psychology', 'cogsci', 'brain'],
+    'Psychology': ['psychology', 'mentalhealth', 'cogsci', 'selfhelp'],
+    'Environment': ['environment', 'conservation', 'wildlife', 'nature', 'ecology'],
+    'Innovation': ['innovation', 'futurology', 'technology', 'science'],
 
     // Lifestyle
     'Gaming': ['gaming', 'Games', 'pcgaming', 'nintendo', 'PS5', 'xbox'],
     'Health & Fitness': ['fitness', 'health', 'nutrition', 'bodybuilding', 'loseit'],
     'Travel': ['travel', 'solotravel', 'backpacking', 'digitalnomad', 'flights'],
     'Food': ['food', 'cooking', 'recipes', 'MealPrepSunday', 'AskCulinary'],
+    'Photography': ['photography', 'photocritique', 'pic', 'itookapicture'],
+    'Movies & TV': ['movies', 'television', 'netflix', 'flicks', 'entertainment'],
+    'Music': ['music', 'listentothis', 'spotify', 'WeAreTheMusicMakers'],
+    'Books': ['books', 'suggestmeabook', 'booksuggestions', 'literature'],
+    'Fashion': ['fashion', 'malefashionadvice', 'femalefashionadvice', 'streetwear'],
+    'Sports': ['sports', 'nfl', 'nba', 'soccer', 'baseball', 'olympics'],
 
     // News & Politics
     'World News': ['worldnews', 'news', 'politics', 'geopolitics'],
     'Politics': ['politics', 'PoliticalDiscussion', 'moderatepolitics'],
-    'Economics': ['Economics', 'economy', 'finance', 'investing']
+    'Economics': ['Economics', 'economy', 'finance', 'investing'],
+    'Social Issues': ['socialissues', 'changemyview', 'unpopularopinion', 'TrueOffMyChest'],
+    'Policy': ['policy', 'Ask_Politics', 'NeutralPolitics', 'PoliticalDiscussion'],
+    'Elections': ['politics', 'Ask_Politics', 'PoliticalDiscussion'],
+    'International Relations': ['worldnews', 'geopolitics', 'GlobalTalk', 'Ask_Politics'],
+    'Education': ['education', 'Teachers', 'AskAcademia', 'college'],
+    'Law': ['law', 'legaladvice', 'Ask_Lawyers', 'legal']
   }
   
   // REMOVED hardcoded defaults - only use user's actual interests
@@ -407,10 +447,35 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
   // await testRedditAPILimits()
   
   try {
-    const [hackerNewsArticles, redditArticles] = await Promise.all([
-      fetchHackerNewsForInterests(interests),
-      fetchRedditForInterests(interests)
+    // Start with empty arrays for faster initial response
+    let hackerNewsArticles: DynamicArticle[] = []
+    let redditArticles: DynamicArticle[] = []
+    
+    // Fetch in parallel with timeout for speed
+    const timeout = 8000 // 8 seconds max
+    const results = await Promise.allSettled([
+      Promise.race([
+        fetchHackerNewsForInterests(interests),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('HackerNews timeout')), timeout))
+      ]),
+      Promise.race([
+        fetchRedditForInterests(interests),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Reddit timeout')), timeout))
+      ])
     ])
+    
+    // Handle results even if one fails
+    if (results[0].status === 'fulfilled') {
+      hackerNewsArticles = results[0].value
+    } else {
+      console.warn('HackerNews fetch failed:', results[0].reason)
+    }
+    
+    if (results[1].status === 'fulfilled') {
+      redditArticles = results[1].value
+    } else {
+      console.warn('Reddit fetch failed:', results[1].reason)
+    }
     
     console.log(`📊 HackerNews: ${hackerNewsArticles.length} articles`)
     console.log(`📊 Reddit: ${redditArticles.length} articles`)
@@ -434,9 +499,8 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
     
     console.log(`✅ Total articles before filtering: ${allArticles.length}`)
     
-    // TEMPORARY: Show all articles to see what's available
-    console.log('🔧 TEMP: Showing all articles (no filtering) to debug')
-    console.log('📰 All article titles:', allArticles.slice(0, 10).map(a => `"${a.title}" from ${a.sourceName}`))
+    // Minimal logging for better performance
+    console.log(`📊 Total articles collected: ${allArticles.length}`)
     
     // Apply strict interest-based filtering
     if (interests.length > 0) {
