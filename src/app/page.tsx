@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { trackUserInteraction } from '@/lib/firebase/database'
 import { fetchDynamicNews, calculateRelevanceForDynamic, type DynamicArticle } from '@/lib/dynamicNews'
+import { initializeGemini, analyzeArticleRelevance } from '@/lib/gemini'
 
 // Using DynamicArticle from dynamicNews.ts
 
@@ -58,6 +59,8 @@ export default function Home() {
       
       // Apply AI-enhanced ranking if Gemini is available
       fetchedArticles = await enhanceWithAIRanking(fetchedArticles, interests)
+      console.log(`🔍 After AI enhancement: ${fetchedArticles.length} articles`)
+      console.log('🔍 Articles with AI scores:', fetchedArticles.filter(a => a.aiRelevanceScore).length)
       
       // Sort by final AI-enhanced score
       fetchedArticles.sort((a, b) => {
@@ -157,10 +160,20 @@ export default function Home() {
     }
 
     const enhanceWithAIRanking = async (articles: DynamicArticle[], interests: string[]): Promise<DynamicArticle[]> => {
+      // Debug user profile structure
+      console.log('🔍 DEBUG: Full user profile:', userProfile)
+      console.log('🔍 DEBUG: User profile preferences:', userProfile?.preferences)
+      console.log('🔍 DEBUG: AI API keys:', userProfile?.preferences?.ai_api_keys)
+      
       // Check if user has Gemini API key configured
       const geminiKey = userProfile?.preferences?.ai_api_keys?.gemini
+      console.log('🔍 DEBUG: Gemini key found:', geminiKey ? 'YES' : 'NO')
+      console.log('🔍 DEBUG: Interests length:', interests.length)
+      
       if (!geminiKey || !interests.length) {
         console.log('⚠️ No Gemini API key or interests - skipping AI enhancement')
+        console.log('  - Gemini key:', geminiKey ? 'PROVIDED' : 'MISSING')
+        console.log('  - Interests:', interests.length > 0 ? `${interests.length} interests` : 'NO INTERESTS')
         return articles
       }
 
@@ -171,9 +184,12 @@ export default function Home() {
 
       // Enhance top articles with AI scoring (limit to top 10 for performance)
       const topArticles = articles.slice(0, 10)
+      console.log(`🤖 Starting AI enhancement for ${topArticles.length} articles`)
+      
       const enhancedArticles = await Promise.all(
-        topArticles.map(async (article) => {
+        topArticles.map(async (article, index) => {
           try {
+            console.log(`🤖 Processing article ${index + 1}/${topArticles.length}: "${article.title.substring(0, 50)}..."`)
             const aiAnalysis = await analyzeArticleRelevance(
               article.title,
               article.summary || '',
@@ -183,19 +199,25 @@ export default function Home() {
             if (aiAnalysis) {
               article.aiRelevanceScore = aiAnalysis.score
               article.aiRelevanceReasoning = aiAnalysis.reasoning
-              console.log(`🤖 AI scored "${article.title}": ${aiAnalysis.score}/100`)
+              console.log(`✅ AI scored "${article.title.substring(0, 30)}...": ${aiAnalysis.score}/100`)
+            } else {
+              console.log(`⚠️ No AI analysis for "${article.title.substring(0, 30)}..."`)
             }
 
             return article
           } catch (error) {
-            console.warn(`❌ AI analysis failed for "${article.title}":`, error)
+            console.warn(`❌ AI analysis failed for "${article.title.substring(0, 30)}...":`, error)
             return article
           }
         })
       )
+      
+      console.log(`🤖 AI enhancement completed: ${enhancedArticles.length} articles processed`)
 
       // Return enhanced articles + remaining articles
-      return [...enhancedArticles, ...articles.slice(10)]
+      const finalArticles = [...enhancedArticles, ...articles.slice(10)]
+      console.log(`🔍 AI Enhancement complete: ${enhancedArticles.length} enhanced + ${articles.slice(10).length} remaining = ${finalArticles.length} total`)
+      return finalArticles
     }
 
   const handleRefresh = async () => {

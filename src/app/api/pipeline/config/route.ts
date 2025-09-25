@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const config: PipelineConfig = await request.json()
+    const { config, userId }: { config: PipelineConfig, userId: string } = await request.json()
     
     // Validate configuration
     const validationErrors = validateConfig(config)
@@ -67,9 +67,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-    
-    // In production, save to database with user ID
-    // await savePipelineConfig(config.userId, config)
     
     // Update current config (don't overwrite API key if masked)
     const updatedConfig = {
@@ -81,12 +78,58 @@ export async function POST(request: NextRequest) {
     
     currentConfig = updatedConfig
     
+    // IMPORTANT: Save Gemini API key to user profile for main app
+    if (updatedConfig.geminiApiKey && updatedConfig.geminiApiKey !== '••••••••') {
+      try {
+        console.log('💾 Saving Gemini API key to user profile...')
+        
+        // Import Firebase functions
+        const { doc, updateDoc, setDoc, getDoc } = await import('firebase/firestore')
+        const { db } = await import('@/lib/firebase/config')
+        
+        // Get or create user profile
+        const actualUserId = userId || 'anonymous-user'
+        console.log('💾 Saving to user ID:', actualUserId)
+        const userRef = doc(db, 'users', actualUserId)
+        const userSnap = await getDoc(userRef)
+        
+        let userProfile = userSnap.exists() ? userSnap.data() : {}
+        
+        // Update preferences with Gemini API key
+        const updatedProfile = {
+          ...userProfile,
+          preferences: {
+            ...userProfile.preferences,
+            ai_api_keys: {
+              ...userProfile.preferences?.ai_api_keys,
+              gemini: updatedConfig.geminiApiKey
+            }
+          },
+          updatedAt: new Date()
+        }
+        
+        await setDoc(userRef, updatedProfile, { merge: true })
+        console.log('✅ Gemini API key saved to user profile successfully')
+        console.log('📋 Profile structure saved:', {
+          userId: actualUserId,
+          hasPreferences: !!updatedProfile.preferences,
+          hasAiKeys: !!updatedProfile.preferences?.ai_api_keys,
+          hasGeminiKey: !!updatedProfile.preferences?.ai_api_keys?.gemini
+        })
+        
+      } catch (profileError) {
+        console.error('❌ Failed to save Gemini key to profile:', profileError)
+        // Continue anyway - pipeline config is still saved
+      }
+    }
+    
     console.log('📝 Pipeline configuration updated:', {
       enabledComponents: Object.entries(config)
         .filter(([key, value]) => key.startsWith('enable') && value)
         .map(([key]) => key.replace('enable', '')),
       batchSize: config.batchSize,
-      parallelProcessing: config.enableParallelProcessing
+      parallelProcessing: config.enableParallelProcessing,
+      geminiApiKey: updatedConfig.geminiApiKey ? 'PROVIDED' : 'NOT_PROVIDED'
     })
     
     // Trigger configuration reload in pipeline
@@ -94,7 +137,7 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({ 
       success: true, 
-      message: 'Configuration saved successfully',
+      message: 'Configuration and Gemini API key saved successfully to user profile',
       config: {
         ...updatedConfig,
         geminiApiKey: updatedConfig.geminiApiKey ? '••••••••' : ''

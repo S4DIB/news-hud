@@ -1,6 +1,8 @@
 // Dynamic news fetching based on user interests
 // This replaces storing articles in Firebase with real-time API calls
 
+import { createTwitterClient } from './twitter/client'
+
 export interface DynamicArticle {
   id: string
   title: string
@@ -176,6 +178,152 @@ export async function fetchHackerNewsForInterests(interests: string[]): Promise<
   } catch (error) {
     console.error('Error fetching HackerNews:', error)
     return []
+  }
+}
+
+// Fetch news from Twitter/X based on interests (limited to 5 tweets to conserve API quota)
+export async function fetchTwitterForInterests(interests: string[]): Promise<DynamicArticle[]> {
+  try {
+    // Only fetch if Twitter API is configured
+    if (!process.env.TWITTER_BEARER_TOKEN) {
+      console.log('⚠️ Twitter API not configured - skipping Twitter fetch')
+      return []
+    }
+
+    console.log('🐦 Fetching Twitter content for interests:', interests)
+    
+    // Create Twitter client
+    const client = createTwitterClient()
+    
+    // High-value tech accounts prioritized by interests
+    const interestAccountMap: Record<string, string[]> = {
+      'Artificial Intelligence': ['OpenAI', 'sama', 'ylecun', 'anthropicai', 'googledeepmind'],
+      'Machine Learning': ['OpenAI', 'huggingface', 'ylecun', 'googledeepmind'],
+      'Programming': ['github', 'paulg', 'naval', 'garrytan'],
+      'Startups': ['paulg', 'naval', 'garrytan', 'sama', 'jason'],
+      'Blockchain': ['elonmusk', 'balajis', 'naval'],
+      'Tech News': ['techcrunch', 'verge', 'arstechnica', 'wired'],
+      'Default': ['OpenAI', 'sama', 'techcrunch', 'paulg', 'elonmusk'] // fallback accounts
+    }
+    
+    // Get relevant accounts based on interests
+    let targetAccounts: string[] = []
+    for (const interest of interests) {
+      if (interestAccountMap[interest]) {
+        targetAccounts.push(...interestAccountMap[interest])
+      }
+    }
+    
+    // If no specific accounts found, use default high-value accounts
+    if (targetAccounts.length === 0) {
+      targetAccounts = interestAccountMap['Default']
+    }
+    
+    // Remove duplicates and limit to 3 accounts to stay within API limits
+    targetAccounts = [...new Set(targetAccounts)].slice(0, 3)
+    
+    console.log(`🐦 Targeting Twitter accounts: ${targetAccounts.join(', ')}`)
+    
+    const articles: DynamicArticle[] = []
+    let tweetsProcessed = 0
+    
+    // Fetch tweets from each account (max 2 tweets per account = 6 total, well under 5 limit)
+    for (const username of targetAccounts) {
+      if (tweetsProcessed >= 5) break // Strict limit of 5 total tweets
+      
+      try {
+        console.log(`🐦 Fetching from @${username}...`)
+        
+        const { user, tweets } = await client.getUserTweetsByUsername(
+          username, 
+          2, // Max 2 tweets per account
+          true // Exclude replies
+        )
+        
+        if (!user || tweets.length === 0) {
+          console.log(`📭 No tweets found for @${username}`)
+          continue
+        }
+        
+        // Process each tweet
+        for (const tweet of tweets) {
+          if (tweetsProcessed >= 5) break // Enforce strict limit
+          
+          try {
+            // Basic quality filter
+            const engagement = tweet.public_metrics?.like_count || 0
+            const tweetLength = tweet.text?.length || 0
+            
+            // Skip low-quality tweets
+            if (engagement < 5 || tweetLength < 50) {
+              continue
+            }
+            
+            // Clean tweet text
+            let cleanText = tweet.text
+              .replace(/https:\/\/t\.co\/\w+/g, '') // Remove t.co links
+              .replace(/@\w+/g, '') // Remove mentions  
+              .replace(/\n+/g, ' ') // Clean line breaks
+              .trim()
+            
+            if (cleanText.length < 30) continue // Skip if too short after cleaning
+            
+            // Calculate popularity score based on engagement
+            const totalEngagement = (tweet.public_metrics?.like_count || 0) + 
+                                   (tweet.public_metrics?.retweet_count || 0) + 
+                                   (tweet.public_metrics?.reply_count || 0)
+            
+            const popularityScore = Math.min(totalEngagement / 1000, 1) // Normalize to 0-1
+            
+            const article: DynamicArticle = {
+              id: `twitter-${tweet.id}`,
+              title: cleanText.length > 100 ? cleanText.substring(0, 97) + '...' : cleanText,
+              summary: cleanText,
+              url: `https://twitter.com/${user.username}/status/${tweet.id}`,
+              author: `@${user.username}`,
+              sourceName: 'Twitter',
+              publishedAt: new Date(tweet.created_at),
+              popularityScore: popularityScore,
+              finalScore: popularityScore,
+              tags: ['twitter', 'social', 'tech'],
+              metadata: {
+                tweetId: tweet.id,
+                authorId: user.id,
+                authorName: user.name,
+                authorUsername: user.username,
+                likes: tweet.public_metrics?.like_count || 0,
+                retweets: tweet.public_metrics?.retweet_count || 0,
+                replies: tweet.public_metrics?.reply_count || 0,
+                totalEngagement: totalEngagement,
+                originalText: tweet.text
+              }
+            }
+            
+            articles.push(article)
+            tweetsProcessed++
+            
+            console.log(`✅ Added tweet from @${username}: ${engagement} engagement`)
+            
+          } catch (tweetError) {
+            console.warn(`❌ Error processing tweet ${tweet.id}:`, tweetError)
+          }
+        }
+        
+        // Small delay to be respectful to API
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+      } catch (accountError) {
+        console.warn(`❌ Error fetching from @${username}:`, accountError)
+        continue
+      }
+    }
+    
+    console.log(`🐦 Twitter fetch complete: ${articles.length} tweets collected (${tweetsProcessed} total processed)`)
+    return articles
+    
+  } catch (error) {
+    console.error('❌ Twitter fetch error:', error)
+    return [] // Return empty array on error, don't fail entire news fetch
   }
 }
 
@@ -450,6 +598,7 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
     // Start with empty arrays for faster initial response
     let hackerNewsArticles: DynamicArticle[] = []
     let redditArticles: DynamicArticle[] = []
+    let twitterArticles: DynamicArticle[] = []
     
     // Fetch in parallel with timeout for speed
     const timeout = 8000 // 8 seconds max
@@ -461,6 +610,10 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
       Promise.race([
         fetchRedditForInterests(interests),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Reddit timeout')), timeout))
+      ]),
+      Promise.race([
+        fetchTwitterForInterests(interests),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Twitter timeout')), timeout))
       ])
     ])
     
@@ -477,18 +630,27 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
       console.warn('Reddit fetch failed:', results[1].reason)
     }
     
+    if (results[2].status === 'fulfilled') {
+      twitterArticles = results[2].value
+    } else {
+      console.warn('Twitter fetch failed:', results[2].reason)
+    }
+    
     console.log(`📊 HackerNews: ${hackerNewsArticles.length} articles`)
     console.log(`📊 Reddit: ${redditArticles.length} articles`)
+    console.log(`📊 Twitter: ${twitterArticles.length} articles`)
     
     // Log sample titles to see what we're getting
     console.log('🌐 HackerNews sample:', hackerNewsArticles.slice(0, 3).map(a => a.title))
     console.log('🔴 Reddit sample:', redditArticles.slice(0, 3).map(a => a.title))
+    console.log('🐦 Twitter sample:', twitterArticles.slice(0, 3).map(a => a.title))
     
     // Simplified logging for speed
     console.log(`🌐 HackerNews: ${hackerNewsArticles.length} articles fetched`)
     console.log(`🔴 Reddit: ${redditArticles.length} articles fetched`)
+    console.log(`🐦 Twitter: ${twitterArticles.length} articles fetched`)
     
-    const allArticles = [...hackerNewsArticles, ...redditArticles]
+    const allArticles = [...hackerNewsArticles, ...redditArticles, ...twitterArticles]
     
     // Sort by relevance and recency
     allArticles.sort((a, b) => {

@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface PipelineStatus {
   overall: 'healthy' | 'warning' | 'error'
@@ -34,6 +35,7 @@ interface PipelineConfig {
 }
 
 export default function PipelineDashboard() {
+  const { user, userProfile, loading: authLoading } = useAuth()
   const [activeTab, setActiveTab] = useState('components')
   const [isLoading, setIsLoading] = useState(false)
 
@@ -100,10 +102,31 @@ export default function PipelineDashboard() {
   const savePipelineConfig = async () => {
     setIsLoading(true)
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      alert('Pipeline configuration saved successfully!')
+      console.log('💾 Saving pipeline configuration...')
+      console.log('Gemini API key to save:', config.geminiApiKey ? 'PROVIDED' : 'NOT_PROVIDED')
+      
+      // Save configuration to API
+      const response = await fetch('/api/pipeline/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user?.uid || 'anonymous-user',
+          config: config
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to save configuration')
+      }
+
+      const result = await response.json()
+      console.log('✅ Configuration saved successfully:', result)
+      alert('Pipeline configuration saved successfully! Your Gemini API key is now active.')
     } catch (error) {
-      alert('Failed to save configuration')
+      console.error('❌ Failed to save configuration:', error)
+      alert('Failed to save configuration. Please try again.')
     } finally {
       setIsLoading(false)
     }
