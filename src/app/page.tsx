@@ -56,11 +56,22 @@ export default function Home() {
         calculateRelevanceForDynamic(article, interests)
       )
       
-      // Sort by relevance and popularity
+      // Apply AI-enhanced ranking if Gemini is available
+      fetchedArticles = await enhanceWithAIRanking(fetchedArticles, interests)
+      
+      // Sort by final AI-enhanced score
       fetchedArticles.sort((a, b) => {
-        const scoreA = (a.relevanceScore || 0) * 0.6 + a.popularityScore * 0.4
-        const scoreB = (b.relevanceScore || 0) * 0.6 + b.popularityScore * 0.4
-        return scoreB - scoreA
+        // If AI scoring is available, use it with higher weight
+        if (a.aiRelevanceScore !== undefined && b.aiRelevanceScore !== undefined) {
+          const scoreA = (a.aiRelevanceScore / 100) * 0.5 + (a.relevanceScore || 0) * 0.3 + a.popularityScore * 0.2
+          const scoreB = (b.aiRelevanceScore / 100) * 0.5 + (b.relevanceScore || 0) * 0.3 + b.popularityScore * 0.2
+          return scoreB - scoreA
+        } else {
+          // Fallback to original scoring
+          const scoreA = (a.relevanceScore || 0) * 0.6 + a.popularityScore * 0.4
+          const scoreB = (b.relevanceScore || 0) * 0.6 + b.popularityScore * 0.4
+          return scoreB - scoreA
+        }
       })
       
       console.log('🎯 Final articles after sorting:', fetchedArticles.slice(0, 3).map(a => ({ 
@@ -132,8 +143,59 @@ export default function Home() {
     }
 
     const calculateScore = (article: DynamicArticle) => {
-      const relevanceBonus = (article.relevanceScore || 0) * 0.3
-      return Math.round(((article.finalScore || article.popularityScore || 0.5) + relevanceBonus) * 100)
+      if (article.aiRelevanceScore !== undefined) {
+        // AI-enhanced scoring
+        const aiScore = article.aiRelevanceScore / 100
+        const relevanceScore = article.relevanceScore || 0
+        const popularityScore = article.popularityScore || 0.5
+        return Math.round((aiScore * 0.5 + relevanceScore * 0.3 + popularityScore * 0.2) * 100)
+      } else {
+        // Fallback scoring
+        const relevanceBonus = (article.relevanceScore || 0) * 0.3
+        return Math.round(((article.finalScore || article.popularityScore || 0.5) + relevanceBonus) * 100)
+      }
+    }
+
+    const enhanceWithAIRanking = async (articles: DynamicArticle[], interests: string[]): Promise<DynamicArticle[]> => {
+      // Check if user has Gemini API key configured
+      const geminiKey = userProfile?.preferences?.ai_api_keys?.gemini
+      if (!geminiKey || !interests.length) {
+        console.log('⚠️ No Gemini API key or interests - skipping AI enhancement')
+        return articles
+      }
+
+      console.log('🤖 Enhancing articles with AI relevance scoring...')
+      
+      // Initialize Gemini if not already done
+      initializeGemini(geminiKey)
+
+      // Enhance top articles with AI scoring (limit to top 10 for performance)
+      const topArticles = articles.slice(0, 10)
+      const enhancedArticles = await Promise.all(
+        topArticles.map(async (article) => {
+          try {
+            const aiAnalysis = await analyzeArticleRelevance(
+              article.title,
+              article.summary || '',
+              interests
+            )
+
+            if (aiAnalysis) {
+              article.aiRelevanceScore = aiAnalysis.score
+              article.aiRelevanceReasoning = aiAnalysis.reasoning
+              console.log(`🤖 AI scored "${article.title}": ${aiAnalysis.score}/100`)
+            }
+
+            return article
+          } catch (error) {
+            console.warn(`❌ AI analysis failed for "${article.title}":`, error)
+            return article
+          }
+        })
+      )
+
+      // Return enhanced articles + remaining articles
+      return [...enhancedArticles, ...articles.slice(10)]
     }
 
   const handleRefresh = async () => {
@@ -144,9 +206,9 @@ export default function Home() {
       // Fetch fresh content immediately
       await fetchNews()
       
-      console.log('✅ Manual refresh completed!')
+      console.log('Manual refresh completed!')
     } catch (error) {
-      console.error('❌ Refresh error:', error)
+      console.error('Refresh error:', error)
     } finally {
       setRefreshing(false)
     }
