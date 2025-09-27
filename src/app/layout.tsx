@@ -6,11 +6,16 @@ import { AuthProvider } from '@/contexts/AuthContext'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'HUD News - AI-Powered News Aggregation',
-  description: 'A personalized HUD-style news aggregation app with AI-powered ranking and auto-scrolling feeds',
-  keywords: ['news', 'AI', 'aggregation', 'personalized', 'HUD', 'tech'],
+  title: 'HUD News - Enterprise AI News Intelligence Platform',
+  description: 'Professional news intelligence platform with AI-powered ranking, real-time processing, and enterprise-grade analytics. Built for FAANG engineers and YC founders.',
+  keywords: ['news intelligence', 'AI', 'enterprise', 'analytics', 'API', 'FAANG', 'YC', 'startup'],
   authors: [{ name: 'HUD News Team' }],
   viewport: 'width=device-width, initial-scale=1',
+  openGraph: {
+    title: 'HUD News - Enterprise AI News Intelligence',
+    description: 'Transform information overload into personalized insights with enterprise-grade AI news intelligence.',
+    type: 'website',
+  },
 }
 
 export default function RootLayout({
@@ -22,9 +27,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <AuthProvider>
-          <div className="hud-screen scan-lines">
-            {children}
-          </div>
+          {children}
         </AuthProvider>
       </body>
     </html>

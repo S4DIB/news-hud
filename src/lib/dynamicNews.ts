@@ -2,6 +2,81 @@
 // This replaces storing articles in Firebase with real-time API calls
 
 import { createTwitterClient } from './twitter/client'
+import { createNewsletterClient, NEWSLETTER_CONFIGS } from './newsletters/client'
+
+// NewsAPI configuration  
+const NEWS_API_KEY = process.env.NEWS_API_KEY || process.env.NEXT_PUBLIC_NEWS_API_KEY
+
+// Debug: Log NewsAPI configuration (only first few characters for security)
+console.log('🔧 NewsAPI Configuration:', {
+  hasKey: !!NEWS_API_KEY,
+  keyPreview: NEWS_API_KEY ? NEWS_API_KEY.substring(0, 8) + '...' : 'NOT_SET'
+})
+
+// Utility function to clean and decode HTML entities in text
+function cleanTextContent(text: string): string {
+  if (!text) return ''
+  
+  // Remove HTML tags
+  text = text.replace(/<[^>]*>/g, '')
+  
+  // Decode common HTML entities
+  const htmlEntities: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#x27;': "'",
+    '&#39;': "'",
+    '&apos;': "'",
+    '&nbsp;': ' ',
+    '&#x2F;': '/',
+    '&#x2f;': '/',
+    '&#47;': '/',
+    '&hellip;': '...',
+    '&mdash;': '—',
+    '&ndash;': '–',
+    '&ldquo;': '"',
+    '&rdquo;': '"',
+    '&lsquo;': "'",
+    '&rsquo;': "'",
+    '&bull;': '•'
+  }
+  
+  // Replace HTML entities
+  for (const [entity, replacement] of Object.entries(htmlEntities)) {
+    text = text.replace(new RegExp(entity, 'g'), replacement)
+  }
+  
+  // Handle numeric HTML entities (like &#x27;)
+  text = text.replace(/&#x([0-9a-fA-F]+);/g, (match, hex) => {
+    try {
+      return String.fromCharCode(parseInt(hex, 16))
+    } catch {
+      return match
+    }
+  })
+  
+  // Handle decimal HTML entities (like &#39;)
+  text = text.replace(/&#(\d+);/g, (match, dec) => {
+    try {
+      return String.fromCharCode(parseInt(dec, 10))
+    } catch {
+      return match
+    }
+  })
+  
+  // Clean up extra whitespace and newlines
+  text = text.replace(/\s+/g, ' ').trim()
+  
+  // Remove URLs that look broken or encoded
+  text = text.replace(/https?:\/\/[^\s]+/g, '')
+  
+  // Clean up any remaining weird characters
+  text = text.replace(/[^\w\s\-.,!?'"():\/@#$%&*+=[\]{}|\\;`~]/g, '')
+  
+  return text
+}
 
 export interface DynamicArticle {
   id: string
@@ -16,6 +91,8 @@ export interface DynamicArticle {
   tags: string[]
   metadata: any
   relevanceScore?: number
+  aiRelevanceScore?: number
+  aiRelevanceReasoning?: string
 }
 
 // Map interests to search terms for different APIs
@@ -156,10 +233,10 @@ export async function fetchHackerNewsForInterests(interests: string[]): Promise<
         console.log(`🌐 HN Match: "${story.title}" - matched: ${matchedTerms.join(', ')}`)
         articles.push({
           id: `hn-${story.id}`,
-          title: story.title,
-          summary: story.text || '',
+          title: cleanTextContent(story.title),
+          summary: cleanTextContent(story.text || ''),
           url: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
-          author: story.by || 'Unknown',
+          author: cleanTextContent(story.by || 'Unknown'),
           sourceName: 'HackerNews',
           publishedAt: new Date(story.time * 1000),
           popularityScore: Math.min((story.score || 0) / 500, 1),
@@ -178,6 +255,203 @@ export async function fetchHackerNewsForInterests(interests: string[]): Promise<
   } catch (error) {
     console.error('Error fetching HackerNews:', error)
     return []
+  }
+}
+
+// Fetch real news from NewsAPI based on interests
+export async function fetchNewsAPIForInterests(interests: string[]): Promise<DynamicArticle[]> {
+  try {
+    // Check if NewsAPI is configured
+    if (!NEWS_API_KEY) {
+      console.error('❌ NewsAPI not configured!')
+      console.error('   Missing NEWS_API_KEY in environment variables')
+      console.error('   1. Get API key from https://newsapi.org/')
+      console.error('   2. Add NEWS_API_KEY=your_key to .env.local')  
+      console.error('   3. Restart development server with: npm run dev')
+      return []
+    }
+    
+    console.log('✅ NewsAPI configured successfully')
+
+    console.log('📰 Fetching NewsAPI content for interests:', interests)
+    
+    // Map interests to NewsAPI categories and keywords
+    const interestToKeywords: Record<string, { category?: string, keywords: string[] }> = {
+      'Artificial Intelligence': { category: 'technology', keywords: ['artificial intelligence', 'AI', 'machine learning', 'OpenAI', 'ChatGPT'] },
+      'Machine Learning': { category: 'technology', keywords: ['machine learning', 'ML', 'neural networks', 'deep learning'] },
+      'Programming': { category: 'technology', keywords: ['programming', 'software development', 'coding', 'developer'] },
+      'Startups': { category: 'business', keywords: ['startup', 'venture capital', 'funding', 'entrepreneur'] },
+      'Health & Fitness': { category: 'health', keywords: ['fitness', 'health', 'exercise', 'nutrition', 'wellness'] },
+      'Blockchain': { category: 'technology', keywords: ['blockchain', 'cryptocurrency', 'bitcoin', 'ethereum', 'crypto'] },
+      'Stock Market': { category: 'business', keywords: ['stock market', 'trading', 'investing', 'NYSE', 'NASDAQ'] },
+      'Space': { category: 'science', keywords: ['space', 'NASA', 'SpaceX', 'rocket', 'satellite'] },
+      'Climate Change': { category: 'science', keywords: ['climate change', 'renewable energy', 'sustainability', 'green tech'] }
+    }
+
+    const articles: DynamicArticle[] = []
+    
+    // Get search terms for current interests
+    let searchQueries: string[] = []
+    let categories: string[] = []
+    
+    for (const interest of interests) {
+      const mapping = interestToKeywords[interest]
+      if (mapping) {
+        if (mapping.category) categories.push(mapping.category)
+        searchQueries.push(...mapping.keywords.slice(0, 2)) // Limit keywords per interest
+      }
+    }
+    
+    // Remove duplicates
+    categories = Array.from(new Set(categories))
+    searchQueries = Array.from(new Set(searchQueries)).slice(0, 3) // Limit total queries
+    
+    console.log(`📰 NewsAPI queries: ${searchQueries.join(', ')}`)
+    console.log(`📰 NewsAPI categories: ${categories.join(', ')}`)
+    
+    // Fetch by category first (more reliable)
+    if (categories.length > 0) {
+      for (const category of categories.slice(0, 2)) { // Max 2 categories to avoid rate limits
+        try {
+          const url = `https://newsapi.org/v2/top-headlines?country=us&category=${category}&pageSize=10&apiKey=${NEWS_API_KEY}`
+          
+          const response = await fetch(url)
+          if (!response.ok) {
+            console.warn(`NewsAPI category ${category} failed: ${response.status}`)
+            continue
+          }
+          
+          const data = await response.json()
+          
+          if (data.articles && data.articles.length > 0) {
+            console.log(`📰 Found ${data.articles.length} articles in ${category} category`)
+            
+            for (const newsArticle of data.articles.slice(0, 5)) { // Max 5 per category
+              try {
+                // Skip articles without proper content
+                if (!newsArticle.title || newsArticle.title === '[Removed]' || 
+                    !newsArticle.url || !newsArticle.description) {
+                  continue
+                }
+                
+                // Calculate relevance; start with a strong base for category match
+                // so category-aligned stories are not dropped even if keywords don't appear in the title
+                let relevanceScore = 0.6
+                const searchText = (newsArticle.title + ' ' + newsArticle.description).toLowerCase()
+                
+                for (const interest of interests) {
+                  const keywords = interestToKeywords[interest]?.keywords || []
+                  for (const keyword of keywords) {
+                    if (searchText.includes(keyword.toLowerCase())) {
+                      relevanceScore += 0.2
+                    }
+                  }
+                }
+                
+                // Only exclude if clearly unrelated
+                if (relevanceScore < 0.05) continue
+                
+                const publishedDate = newsArticle.publishedAt ? new Date(newsArticle.publishedAt) : new Date()
+                
+                const article: DynamicArticle = {
+                  id: `newsapi-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                  title: cleanTextContent(newsArticle.title),
+                  summary: cleanTextContent(newsArticle.description || newsArticle.content?.substring(0, 200) || ''),
+                  url: newsArticle.url,
+                  author: cleanTextContent(newsArticle.author || newsArticle.source?.name || 'NewsAPI'),
+                  sourceName: cleanTextContent(newsArticle.source?.name || 'News'),
+                  publishedAt: publishedDate,
+                  popularityScore: relevanceScore,
+                  finalScore: relevanceScore,
+                  tags: ['news', category, 'breaking'],
+                  metadata: {
+                    source: newsArticle.source,
+                    publishedAt: newsArticle.publishedAt,
+                    urlToImage: newsArticle.urlToImage,
+                    category: category,
+                    relevanceScore: relevanceScore
+                  }
+                }
+                
+                articles.push(article)
+                console.log(`✅ Added NewsAPI article: ${newsArticle.title.substring(0, 50)}... (${relevanceScore.toFixed(2)} relevance)`)
+                
+              } catch (articleError) {
+                console.warn(`❌ Error processing NewsAPI article:`, articleError)
+              }
+            }
+          }
+          
+          // Small delay to be respectful to API
+          await new Promise(resolve => setTimeout(resolve, 500))
+          
+        } catch (categoryError) {
+          console.warn(`❌ Error fetching NewsAPI category ${category}:`, categoryError)
+        }
+      }
+    }
+    
+    // If we have specific keywords and few articles, try keyword search
+    if (articles.length < 5 && searchQueries.length > 0) {
+      try {
+        const query = searchQueries[0] // Use first/most relevant keyword
+        const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}&sortBy=publishedAt&pageSize=10&language=en&apiKey=${NEWS_API_KEY}`
+        
+        const response = await fetch(url)
+        if (response.ok) {
+          const data = await response.json()
+          
+          if (data.articles && data.articles.length > 0) {
+            console.log(`📰 Found ${data.articles.length} articles for query "${query}"`)
+            
+            for (const newsArticle of data.articles.slice(0, 3)) { // Max 3 from keyword search
+              try {
+                if (!newsArticle.title || newsArticle.title === '[Removed]' || 
+                    !newsArticle.url || !newsArticle.description) {
+                  continue
+                }
+                
+                const publishedDate = newsArticle.publishedAt ? new Date(newsArticle.publishedAt) : new Date()
+                
+                const article: DynamicArticle = {
+                  id: `newsapi-search-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                  title: cleanTextContent(newsArticle.title),
+                  summary: cleanTextContent(newsArticle.description || newsArticle.content?.substring(0, 200) || ''),
+                  url: newsArticle.url,
+                  author: cleanTextContent(newsArticle.author || newsArticle.source?.name || 'NewsAPI'),
+                  sourceName: cleanTextContent(newsArticle.source?.name || 'News'),
+                  publishedAt: publishedDate,
+                  popularityScore: 0.8, // Favor explicit keyword hits
+                  finalScore: 0.8,
+                  tags: ['news', 'search', query],
+                  metadata: {
+                    source: newsArticle.source,
+                    publishedAt: newsArticle.publishedAt,
+                    urlToImage: newsArticle.urlToImage,
+                    searchQuery: query
+                  }
+                }
+                
+                articles.push(article)
+                console.log(`✅ Added NewsAPI search result: ${newsArticle.title.substring(0, 50)}...`)
+                
+              } catch (articleError) {
+                console.warn(`❌ Error processing NewsAPI search article:`, articleError)
+              }
+            }
+          }
+        }
+      } catch (searchError) {
+        console.warn(`❌ Error with NewsAPI keyword search:`, searchError)
+      }
+    }
+    
+    console.log(`📰 NewsAPI fetch complete: ${articles.length} articles collected`)
+    return articles
+    
+  } catch (error) {
+    console.error('❌ NewsAPI fetch error:', error)
+    return [] // Return empty array on error, don't fail entire news fetch
   }
 }
 
@@ -220,7 +494,7 @@ export async function fetchTwitterForInterests(interests: string[]): Promise<Dyn
     }
     
     // Remove duplicates and limit to 3 accounts to stay within API limits
-    targetAccounts = [...new Set(targetAccounts)].slice(0, 3)
+    targetAccounts = Array.from(new Set(targetAccounts)).slice(0, 3)
     
     console.log(`🐦 Targeting Twitter accounts: ${targetAccounts.join(', ')}`)
     
@@ -266,6 +540,9 @@ export async function fetchTwitterForInterests(interests: string[]): Promise<Dyn
               .replace(/\n+/g, ' ') // Clean line breaks
               .trim()
             
+            // Apply comprehensive text cleaning
+            cleanText = cleanTextContent(cleanText)
+            
             if (cleanText.length < 30) continue // Skip if too short after cleaning
             
             // Calculate popularity score based on engagement
@@ -280,7 +557,7 @@ export async function fetchTwitterForInterests(interests: string[]): Promise<Dyn
               title: cleanText.length > 100 ? cleanText.substring(0, 97) + '...' : cleanText,
               summary: cleanText,
               url: `https://twitter.com/${user.username}/status/${tweet.id}`,
-              author: `@${user.username}`,
+              author: cleanTextContent(`@${user.username}`),
               sourceName: 'Twitter',
               publishedAt: new Date(tweet.created_at),
               popularityScore: popularityScore,
@@ -289,8 +566,8 @@ export async function fetchTwitterForInterests(interests: string[]): Promise<Dyn
               metadata: {
                 tweetId: tweet.id,
                 authorId: user.id,
-                authorName: user.name,
-                authorUsername: user.username,
+                authorName: cleanTextContent(user.name),
+                authorUsername: cleanTextContent(user.username),
                 likes: tweet.public_metrics?.like_count || 0,
                 retweets: tweet.public_metrics?.retweet_count || 0,
                 replies: tweet.public_metrics?.reply_count || 0,
@@ -327,7 +604,111 @@ export async function fetchTwitterForInterests(interests: string[]): Promise<Dyn
   }
 }
 
-// Fetch news from Reddit based on interests
+// Fetch newsletters based on interests (RundownAI, TLDR AI, AI News)
+export async function fetchNewslettersForInterests(interests: string[]): Promise<DynamicArticle[]> {
+  try {
+    console.log('📧 Fetching newsletter content for interests:', interests)
+    
+    const client = createNewsletterClient()
+    const articles: DynamicArticle[] = []
+    
+    // Map interests to relevant newsletters
+    const interestNewsletterMap: Record<string, string[]> = {
+      'Artificial Intelligence': ['tldr-ai', 'rundown-ai', 'ai-news'],
+      'Machine Learning': ['tldr-ai', 'rundown-ai', 'ai-news'],
+      'Programming': ['tldr-ai'],
+      'Startups': ['tldr-ai'],
+      'Blockchain': ['tldr-ai'],
+      'Tech News': ['tldr-ai', 'rundown-ai'],
+      'Default': ['tldr-ai', 'rundown-ai'] // fallback newsletters
+    }
+    
+    // Get relevant newsletters based on interests
+    let targetNewsletters: string[] = []
+    for (const interest of interests) {
+      if (interestNewsletterMap[interest]) {
+        targetNewsletters.push(...interestNewsletterMap[interest])
+      }
+    }
+    
+    // If no specific newsletters found, use default high-value newsletters
+    if (targetNewsletters.length === 0) {
+      targetNewsletters = interestNewsletterMap['Default']
+    }
+    
+    // Remove duplicates and limit to 2 newsletters to manage load
+    targetNewsletters = Array.from(new Set(targetNewsletters)).slice(0, 2)
+    
+    console.log(`📧 Targeting newsletters: ${targetNewsletters.map(key => NEWSLETTER_CONFIGS[key]?.name || key).join(', ')}`)
+    
+    // Fetch content from each newsletter
+    for (const newsletterKey of targetNewsletters) {
+      try {
+        console.log(`📧 Fetching ${NEWSLETTER_CONFIGS[newsletterKey]?.name || newsletterKey}...`)
+        
+        const items = await client.getNewsletterContent(newsletterKey)
+        
+        if (items.length === 0) {
+          console.log(`📭 No items found for ${NEWSLETTER_CONFIGS[newsletterKey]?.name || newsletterKey}`)
+          continue
+        }
+        
+        // Take only the most recent items (max 3 per newsletter)
+        const recentItems = items.slice(0, 3)
+        
+        console.log(`📊 ${NEWSLETTER_CONFIGS[newsletterKey]?.name || newsletterKey}: ${items.length} items → ${recentItems.length} selected`)
+        
+        // Convert newsletter items to DynamicArticle format
+        for (const item of recentItems) {
+          try {
+            const score = client.calculateNewsletterScore(item)
+            
+            const article: DynamicArticle = {
+              id: `newsletter-${newsletterKey}-${item.url.split('/').pop() || Date.now()}`,
+              title: cleanTextContent(item.title),
+              summary: cleanTextContent(item.summary),
+              url: item.url,
+              author: cleanTextContent(item.author),
+              sourceName: cleanTextContent(item.source),
+              publishedAt: item.publishedAt,
+              popularityScore: score,
+              finalScore: score,
+              tags: item.tags,
+              metadata: {
+                newsletterSource: item.source,
+                newsletterKey: newsletterKey,
+                contentLength: item.content.length,
+                originalContent: item.content.substring(0, 500) // Store first 500 chars
+              }
+            }
+            
+            articles.push(article)
+            console.log(`✅ Added newsletter item from ${item.source}: "${item.title.substring(0, 50)}..." (Score: ${score.toFixed(2)})`)
+            
+          } catch (itemError) {
+            console.warn(`❌ Error processing newsletter item:`, itemError)
+          }
+        }
+        
+        // Small delay between newsletters to be respectful
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        
+      } catch (newsletterError) {
+        console.warn(`❌ Error fetching newsletter ${newsletterKey}:`, newsletterError)
+        continue
+      }
+    }
+    
+    console.log(`📧 Newsletter fetch complete: ${articles.length} articles collected`)
+    return articles
+    
+  } catch (error) {
+    console.error('❌ Newsletter fetch error:', error)
+    return [] // Return empty array on error, don't fail entire news fetch
+  }
+}
+
+// Fetch news from Reddit based on interests (improved filtering for real news)
 export async function fetchRedditForInterests(interests: string[]): Promise<DynamicArticle[]> {
   try {
     const searchTerms = getSearchTermsForInterests(interests)
@@ -336,12 +717,95 @@ export async function fetchRedditForInterests(interests: string[]): Promise<Dyna
     // Get relevant subreddits based on interests
     const subreddits = getRelevantSubreddits(interests)
     
+    // Patterns to identify and filter out recurring discussion threads AND community info posts
+    const recurringThreadPatterns = [
+      // Daily/Weekly discussion threads
+      /daily.*thread/i,
+      /weekly.*thread/i,
+      /monthly.*thread/i,
+      /moronic monday/i,
+      /simple questions/i,
+      /daily discussion/i,
+      /weekly discussion/i,
+      /rant wednesday/i,
+      /thickheaded thursday/i,
+      /foolish friday/i,
+      /victory sunday/i,
+      /motivation monday/i,
+      /training tuesday/i,
+      /^daily /i,
+      /^weekly /i,
+      /^monthly /i,
+      /general discussion/i,
+      /open discussion/i,
+      /free talk/i,
+      /chat thread/i,
+      /megathread/i,
+      /\[daily\]/i,
+      /\[weekly\]/i,
+      /\[discussion\]/i,
+      
+      // Community info and pinned posts
+      /new to.*\?/i,
+      /click here first/i,
+      /read this first/i,
+      /start here/i,
+      /welcome to/i,
+      /community guidelines/i,
+      /subreddit rules/i,
+      /before posting/i,
+      /read the rules/i,
+      /read the wiki/i,
+      /check the faq/i,
+      /community info/i,
+      /getting started/i,
+      /beginner.*guide/i,
+      /sticky.*post/i,
+      /pinned.*post/i,
+      /^rules/i,
+      /^faq/i,
+      /^wiki/i,
+      /\[rules\]/i,
+      /\[wiki\]/i,
+      /\[faq\]/i,
+      /\[guide\]/i,
+      /\[sticky\]/i,
+      /\[pinned\]/i,
+      /sidebar/i,
+      /^mod post/i,
+      /moderator.*post/i,
+      /announcement/i,
+      /meta.*discussion/i
+    ]
+    
+    // Function to check if a post is a recurring discussion thread
+    const isRecurringThread = (title: string): boolean => {
+      return recurringThreadPatterns.some(pattern => pattern.test(title))
+    }
+    
+    // Function to check if post has external news link (real news indicator)
+    const hasExternalLink = (url: string, domain: string): boolean => {
+      // Check if it's a direct link to external news source
+      const newsSourceDomains = [
+        'techcrunch.com', 'theverge.com', 'arstechnica.com', 'wired.com',
+        'reuters.com', 'bloomberg.com', 'cnbc.com', 'bbc.com', 'cnn.com',
+        'npr.org', 'wsj.com', 'ft.com', 'forbes.com', 'businessinsider.com',
+        'nytimes.com', 'washingtonpost.com', 'guardian.com', 'apnews.com',
+        'healthline.com', 'webmd.com', 'mayoclinic.org', 'harvard.edu',
+        'nature.com', 'science.org', 'scientificamerican.com'
+      ]
+      
+      return newsSourceDomains.some(newsDomain => 
+        url.includes(newsDomain) || domain.includes(newsDomain)
+      )
+    }
+    
     for (const subreddit of subreddits.slice(0, 2)) { // Reduced to 2 subreddits for speed
       try {
         console.log(`🔴 Fetching from r/${subreddit}...`)
         
-        // Alternate between hot, new, and rising for variety
-        const sortTypes = ['hot', 'new', 'rising']
+        // Prioritize 'new' and 'rising' to avoid old pinned community posts
+        const sortTypes = ['new', 'new', 'rising'] // 2x new, 1x rising (avoid 'hot' which shows pinned posts)
         const sortType = sortTypes[Math.floor(Math.random() * sortTypes.length)]
         // Use our Next.js API proxy to avoid CORS issues
         const response = await fetch(`/api/proxy/reddit?subreddit=${subreddit}&sort=${sortType}&limit=5`)
@@ -388,22 +852,133 @@ export async function fetchRedditForInterests(interests: string[]): Promise<Dyna
           for (const post of data.data.children) {
             const postData = post.data
             
+            // FILTER 1: Skip recurring discussion threads and community info posts
+            if (isRecurringThread(postData.title)) {
+              console.log(`🚫 Filtered recurring/community thread: ${postData.title.substring(0, 50)}...`)
+              continue
+            }
+            
+            // FILTER 1.5: Skip pinned/stickied posts (these are usually community info)
+            if (postData.stickied || postData.pinned) {
+              console.log(`🚫 Filtered pinned/stickied post: ${postData.title.substring(0, 50)}...`)
+              continue
+            }
+            
+            // FILTER 2: Skip deleted/removed posts
+            if (postData.title === '[deleted]' || postData.title === '[removed]' || 
+                postData.author === '[deleted]' || postData.author === '[removed]') {
+              continue
+            }
+            
+            // FILTER 3: Skip posts without meaningful content
+            if (postData.title.length < 10) {
+              continue
+            }
+            
+            // FILTER 3.5: Skip very old posts (community info tends to be old)
+            const postAge = Date.now() - (postData.created_utc * 1000)
+            const daysOld = postAge / (1000 * 60 * 60 * 24)
+            if (daysOld > 30) { // Skip posts older than 30 days
+              console.log(`🚫 Filtered old post (${Math.round(daysOld)} days): ${postData.title.substring(0, 50)}...`)
+              continue
+            }
+            
+            // FILTER 4: Prefer posts with external links (real news) over self-posts
+            const isExternalNews = hasExternalLink(postData.url, postData.domain)
+            const isSelfPost = postData.is_self
+            
+            // Calculate quality score
+            let qualityScore = Math.min(postData.score / 1000, 1)
+            
+            // Boost external news sources
+            if (isExternalNews) {
+              qualityScore += 0.3
+              console.log(`✅ External news link: ${postData.title.substring(0, 50)}... from ${postData.domain}`)
+            }
+            
+            // Reduce score for self-posts unless they have high engagement
+            if (isSelfPost && postData.score < 100) {
+              qualityScore *= 0.5
+            }
+            
+            // Skip very low quality posts
+            if (qualityScore < 0.1) {
+              continue
+            }
+            
+            // Generate appropriate summary based on post type
+            let summary = ''
+            
+            // Debug: Log only if summary is problematic (commented out for performance)
+            // console.log(`📝 Reddit post data for "${postData.title.substring(0, 30)}...":`, {...})
+            
+            if (postData.selftext && postData.selftext.trim()) {
+              // Use self-text if available
+              summary = cleanTextContent(postData.selftext)
+            } else if (isExternalNews) {
+              // For external news links, create a summary from available data
+              const parts = []
+              
+              // Add source domain
+              if (postData.domain) {
+                parts.push(`Source: ${postData.domain}`)
+              }
+              
+              // Add engagement info
+              if (postData.score > 0) {
+                parts.push(`${postData.score} upvotes`)
+              }
+              
+              if (postData.num_comments > 0) {
+                parts.push(`${postData.num_comments} comments`)
+              }
+              
+              // Add preview text if available
+              if (postData.preview && postData.preview.description) {
+                const previewText = cleanTextContent(postData.preview.description)
+                if (previewText.length > 10) {
+                  parts.push(previewText.substring(0, 150) + (previewText.length > 150 ? '...' : ''))
+                }
+              }
+              
+              // If we have parts, join them
+              if (parts.length > 0) {
+                summary = parts.join(' • ')
+              } else {
+                // Fallback: extract meaningful info from title or create generic summary
+                summary = `External news article shared on r/${subreddit}${postData.score > 50 ? ' • Popular discussion with ' + postData.score + ' upvotes' : ''}`
+              }
+            } else {
+              // For other types, create a basic summary
+              summary = `Discussion on r/${subreddit}${postData.num_comments > 0 ? ' • ' + postData.num_comments + ' comments' : ''}`
+            }
+            
+            // Ensure summary has some content
+            if (!summary || summary.trim().length < 10) {
+              summary = `${isExternalNews ? 'News article' : 'Discussion'} from r/${subreddit}`
+            }
+            
             articles.push({
               id: `reddit-${postData.id}`,
-              title: postData.title,
-              summary: postData.selftext || '',
+              title: cleanTextContent(postData.title),
+              summary: summary,
               url: postData.url,
-              author: postData.author,
-              sourceName: `Reddit - r/${subreddit}`,
+              author: cleanTextContent(postData.author),
+              sourceName: isExternalNews ? cleanTextContent(postData.domain) : `Reddit - r/${subreddit}`,
               publishedAt: new Date(postData.created_utc * 1000),
-              popularityScore: Math.min(postData.score / 1000, 1),
-              finalScore: Math.min(postData.score / 1000, 1),
+              popularityScore: qualityScore,
+              finalScore: qualityScore,
               tags: extractTagsFromTitle(postData.title),
               metadata: {
                 score: postData.score,
                 comments: postData.num_comments,
                 upvote_ratio: postData.upvote_ratio,
-                subreddit: postData.subreddit
+                subreddit: postData.subreddit,
+                domain: postData.domain,
+                is_self: postData.is_self,
+                is_external_news: isExternalNews,
+                qualityScore: qualityScore,
+                reddit_permalink: `https://reddit.com${postData.permalink}`
               }
             })
           }
@@ -599,6 +1174,8 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
     let hackerNewsArticles: DynamicArticle[] = []
     let redditArticles: DynamicArticle[] = []
     let twitterArticles: DynamicArticle[] = []
+    let newsAPIArticles: DynamicArticle[] = []
+    let newsletterArticles: DynamicArticle[] = []
     
     // Fetch in parallel with timeout for speed
     const timeout = 8000 // 8 seconds max
@@ -614,52 +1191,111 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
       Promise.race([
         fetchTwitterForInterests(interests),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Twitter timeout')), timeout))
+      ]),
+      Promise.race([
+        fetchNewsAPIForInterests(interests),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('NewsAPI timeout')), timeout))
+      ]),
+      Promise.race([
+        fetchNewslettersForInterests(interests),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Newsletters timeout')), timeout))
       ])
     ])
     
     // Handle results even if one fails
     if (results[0].status === 'fulfilled') {
-      hackerNewsArticles = results[0].value
+      hackerNewsArticles = results[0].value as DynamicArticle[]
     } else {
       console.warn('HackerNews fetch failed:', results[0].reason)
     }
     
     if (results[1].status === 'fulfilled') {
-      redditArticles = results[1].value
+      redditArticles = results[1].value as DynamicArticle[]
     } else {
       console.warn('Reddit fetch failed:', results[1].reason)
     }
     
     if (results[2].status === 'fulfilled') {
-      twitterArticles = results[2].value
+      twitterArticles = results[2].value as DynamicArticle[]
     } else {
       console.warn('Twitter fetch failed:', results[2].reason)
     }
     
+    if (results[3].status === 'fulfilled') {
+      newsAPIArticles = results[3].value as DynamicArticle[]
+    } else {
+      console.warn('NewsAPI fetch failed:', results[3].reason)
+    }
+    
+    if (results[4].status === 'fulfilled') {
+      newsletterArticles = results[4].value as DynamicArticle[]
+    } else {
+      console.warn('Newsletters fetch failed:', results[4].reason)
+    }
+    
+    console.log(`📊 FINAL COUNTS:`)
     console.log(`📊 HackerNews: ${hackerNewsArticles.length} articles`)
     console.log(`📊 Reddit: ${redditArticles.length} articles`)
     console.log(`📊 Twitter: ${twitterArticles.length} articles`)
+    console.log(`📊 NewsAPI: ${newsAPIArticles.length} articles`)
+    console.log(`📊 Newsletters: ${newsletterArticles.length} articles`)
     
     // Log sample titles to see what we're getting
-    console.log('🌐 HackerNews sample:', hackerNewsArticles.slice(0, 3).map(a => a.title))
-    console.log('🔴 Reddit sample:', redditArticles.slice(0, 3).map(a => a.title))
-    console.log('🐦 Twitter sample:', twitterArticles.slice(0, 3).map(a => a.title))
+    console.log('🌐 HackerNews sample:', hackerNewsArticles.slice(0, 2).map(a => a.title))
+    console.log('🔴 Reddit sample:', redditArticles.slice(0, 2).map(a => a.title))
+    console.log('🐦 Twitter sample:', twitterArticles.slice(0, 2).map(a => a.title))
+    console.log('📰 NewsAPI sample:', newsAPIArticles.slice(0, 2).map(a => a.title))
+    console.log('📧 Newsletters sample:', newsletterArticles.slice(0, 2).map(a => a.title))
+    
+    // Debug why other sources might be empty
+    if (hackerNewsArticles.length === 0) console.log('⚠️ HackerNews returned no articles')
+    if (newsAPIArticles.length === 0) console.log('⚠️ NewsAPI returned no articles - check API key')
+    if (twitterArticles.length === 0) console.log('⚠️ Twitter returned no articles - check bearer token')
+    if (newsletterArticles.length === 0) console.log('⚠️ Newsletters returned no articles')
     
     // Simplified logging for speed
     console.log(`🌐 HackerNews: ${hackerNewsArticles.length} articles fetched`)
     console.log(`🔴 Reddit: ${redditArticles.length} articles fetched`)
     console.log(`🐦 Twitter: ${twitterArticles.length} articles fetched`)
+    console.log(`📰 NewsAPI: ${newsAPIArticles.length} articles fetched`)
+    console.log(`📧 Newsletters: ${newsletterArticles.length} articles fetched`)
     
-    const allArticles = [...hackerNewsArticles, ...redditArticles, ...twitterArticles]
+    const allArticles = [...hackerNewsArticles, ...redditArticles, ...twitterArticles, ...newsAPIArticles, ...newsletterArticles]
+    
+    console.log(`📰 BEFORE DEDUPLICATION: ${allArticles.length} total articles`)
+    console.log(`   - HackerNews: ${hackerNewsArticles.length}`)
+    console.log(`   - Reddit: ${redditArticles.length}`)
+    console.log(`   - Twitter: ${twitterArticles.length}`)
+    console.log(`   - NewsAPI: ${newsAPIArticles.length}`)
+    
+    // Check for duplicate articles by ID and title
+    const seenIds = new Set<string>()
+    const seenTitles = new Set<string>()
+    const uniqueArticles: DynamicArticle[] = []
+    
+    for (const article of allArticles) {
+      const titleKey = article.title.toLowerCase().trim()
+      const idKey = article.id
+      
+      if (!seenIds.has(idKey) && !seenTitles.has(titleKey)) {
+        seenIds.add(idKey)
+        seenTitles.add(titleKey)
+        uniqueArticles.push(article)
+      } else {
+        console.log(`🚫 Duplicate filtered: ${article.title.substring(0, 40)}... (${article.sourceName}) - ID: ${idKey}`)
+      }
+    }
+    
+    console.log(`📰 AFTER DEDUPLICATION: ${uniqueArticles.length} unique articles`)
     
     // Sort by relevance and recency
-    allArticles.sort((a, b) => {
+    uniqueArticles.sort((a, b) => {
       const scoreA = a.finalScore + (a.relevanceScore || 0)
       const scoreB = b.finalScore + (b.relevanceScore || 0)
       return scoreB - scoreA
     })
     
-    console.log(`✅ Total articles before filtering: ${allArticles.length}`)
+    console.log(`✅ Total unique articles before filtering: ${uniqueArticles.length}`)
     
     // Minimal logging for better performance
     console.log(`📊 Total articles collected: ${allArticles.length}`)
@@ -674,10 +1310,10 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
       if (searchTerms.length === 0) {
         console.error('❌ No search terms generated! This means your interest is not mapped in INTEREST_TO_SEARCH_TERMS')
         console.log('🔍 Available interests:', Object.keys(INTEREST_TO_SEARCH_TERMS))
-        return allArticles.slice(0, 15) // Return some articles for debugging
+        return uniqueArticles.slice(0, 15) // Return some articles for debugging
       }
       
-      const filteredArticles = allArticles.filter(article => {
+      const filteredArticles = uniqueArticles.filter(article => {
         const articleText = `${article.title} ${article.summary || ''}`.toLowerCase()
         let matchedTerms: string[] = []
         let relevanceScore = 0
@@ -717,13 +1353,13 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
       // Only return articles if we have matches for the user's interests
       if (filteredArticles.length === 0) {
         console.log('⚠️ No articles match your interests. Let me show what we found:')
-        console.log('🔍 Raw articles that were checked:', allArticles.map(a => `"${a.title}" from ${a.sourceName}`))
+        console.log('🔍 Raw articles that were checked:', uniqueArticles.map(a => `"${a.title}" from ${a.sourceName}`))
         console.log('⚠️ Try different interests or check back later.')
         
         // TEMPORARY: Return some articles for debugging if we have any
-        if (allArticles.length > 0) {
+        if (uniqueArticles.length > 0) {
           console.log('🔧 TEMP: Returning raw articles for debugging')
-          return allArticles.slice(0, 5)
+          return uniqueArticles.slice(0, 5)
         }
         
         return [] // Return empty array if no articles at all
@@ -732,7 +1368,7 @@ export async function fetchDynamicNews(interests: string[]): Promise<DynamicArti
       return filteredArticles.slice(0, 25) // Return top 25 most relevant
     }
     
-    return allArticles.slice(0, 30) // Return top 30 articles
+    return uniqueArticles.slice(0, 30) // Return top 30 unique articles
     
   } catch (error) {
     console.error('Error fetching dynamic news:', error)

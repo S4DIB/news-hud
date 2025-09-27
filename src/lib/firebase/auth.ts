@@ -36,6 +36,11 @@ export interface UserProfile {
       push: boolean
       digest: 'daily' | 'weekly' | 'never'
     }
+    ai_api_keys?: {
+      gemini?: string
+      openai?: string
+      anthropic?: string
+    }
   }
   interests: string[]
   sources: {
